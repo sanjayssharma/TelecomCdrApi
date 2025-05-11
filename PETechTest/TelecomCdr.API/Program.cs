@@ -1,4 +1,6 @@
 
+using TelecomCdr.API.Middlewares;
+
 namespace TelecomCdr.API
 {
     public class Program
@@ -15,6 +17,9 @@ namespace TelecomCdr.API
             builder.Services.AddSwaggerGen();
 
             var app = builder.Build();
+
+            // Use the global exception handler middleware early in the pipeline
+            app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
 
             // Configure the HTTP request pipeline.
             if (app.Environment.IsDevelopment())
