@@ -15,11 +15,16 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelecomCdr.Data", "TelecomC
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionItems", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
 	ProjectSection(SolutionItems) = preProject
+		.env = .env
 		Directory.Packages.props = Directory.Packages.props
 		docker-compose.yml = docker-compose.yml
 		Nuget.Config = Nuget.Config
 		..\README.md = ..\README.md
 	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelecomCdr.Hangfire", "TelecomCdr.Hangfire\TelecomCdr.Hangfire.csproj", "{470B6F7D-CA22-4F2A-A5F1-3A7FFB3272E2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelecomCdr.AzureFunctions", "TelecomCdr.AzureFunctions\TelecomCdr.AzureFunctions.csproj", "{1BCED6CC-16B7-424B-ACCC-4580D51C5F45}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -47,6 +52,14 @@ Global
 		{EBF70153-439C-4136-9F20-88184B9D2ECF}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{EBF70153-439C-4136-9F20-88184B9D2ECF}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{EBF70153-439C-4136-9F20-88184B9D2ECF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{470B6F7D-CA22-4F2A-A5F1-3A7FFB3272E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{470B6F7D-CA22-4F2A-A5F1-3A7FFB3272E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{470B6F7D-CA22-4F2A-A5F1-3A7FFB3272E2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{470B6F7D-CA22-4F2A-A5F1-3A7FFB3272E2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1BCED6CC-16B7-424B-ACCC-4580D51C5F45}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1BCED6CC-16B7-424B-ACCC-4580D51C5F45}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1BCED6CC-16B7-424B-ACCC-4580D51C5F45}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1BCED6CC-16B7-424B-ACCC-4580D51C5F45}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -1,6 +1,6 @@
-﻿using System.Net;
+﻿using FluentValidation;
+using System.Net;
 using System.Text.Json;
-using TelecomCdr.Core.Models.DTO;
 
 namespace TelecomCdr.API.Middlewares
 {
@@ -11,49 +11,59 @@ namespace TelecomCdr.API.Middlewares
     {
         private readonly RequestDelegate _next;
         private readonly ILogger<GlobalExceptionHandlerMiddleware> _logger;
-        private readonly IHostEnvironment _env;
 
-        public GlobalExceptionHandlerMiddleware(
-            RequestDelegate next,
-            ILogger<GlobalExceptionHandlerMiddleware> logger,
-            IHostEnvironment env)
+        public GlobalExceptionHandlerMiddleware(RequestDelegate next, ILogger<GlobalExceptionHandlerMiddleware> logger)
         {
             _next = next;
             _logger = logger;
-            _env = env;
         }
 
-        public async Task InvokeAsync(HttpContext context)
+        public async Task Invoke(HttpContext context)
         {
             try
             {
                 await _next(context);
             }
-            catch (Exception ex)
+            catch (Exception error)
             {
-                _logger.LogError(ex, "An unhandled exception occurred: {ErrorMessage}", ex.Message);
+                var response = context.Response;
+                response.ContentType = "application/json";
+                var correlationId = context.Items["CorrelationId"]?.ToString() ?? "N/A";
 
-                context.Response.ContentType = "application/json";
-                var statusCode = (int)HttpStatusCode.InternalServerError; // Default to 500
-                string message = "An unexpected internal server error has occurred.";
-                string? details = null;
+                _logger.LogError(error, "An unhandled exception occurred. CorrelationId: {CorrelationId}, Request: {Method} {Path}",
+                    correlationId, context.Request.Method, context.Request.Path);
 
-                if (_env.IsDevelopment())
+                var responseModel = new { Message = "An unexpected error occurred.", CorrelationId = correlationId, Details = (string)null };
+
+                switch (error)
                 {
-                    // Include more details in development
-                    message = ex.Message;
-                    details = ex.StackTrace?.ToString();
+                    case ValidationException e:
+                        response.StatusCode = (int)HttpStatusCode.BadRequest;
+                        responseModel = new { Message = "One or more validation errors occurred.", CorrelationId = correlationId, Details = string.Join("; ", e.Errors.Select(err => err.ErrorMessage)) };
+                        break;
+                    case ArgumentException e:
+                        response.StatusCode = (int)HttpStatusCode.BadRequest;
+                        responseModel = new { Message = e.Message, CorrelationId = correlationId, Details = (string)null };
+                        break;
+                    case FormatException e: // Catch format exceptions from date/time parsing
+                        response.StatusCode = (int)HttpStatusCode.BadRequest;
+                        responseModel = new { Message = $"Error parsing input data: {e.Message}", CorrelationId = correlationId, Details = (string)null };
+                        break;
+                    case FileNotFoundException e:
+                        response.StatusCode = (int)HttpStatusCode.NotFound;
+                        responseModel = new { Message = e.Message, CorrelationId = correlationId, Details = (string)null };
+                        break;
+                    case InvalidOperationException e when e.Message.Contains("Blob storage is not configured"):
+                        response.StatusCode = (int)HttpStatusCode.NotImplemented;
+                        responseModel = new { Message = "This operation requires blob storage, which is not configured.", CorrelationId = correlationId, Details = (string)null };
+                        break;
+                    default:
+                        response.StatusCode = (int)HttpStatusCode.InternalServerError;
+                        break;
                 }
 
-                context.Response.StatusCode = statusCode;
-
-                var errorResponse = new ErrorResponseDto(statusCode, message, details);
-                var jsonResponse = JsonSerializer.Serialize(errorResponse, new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-                });
-
-                await context.Response.WriteAsync(jsonResponse);
+                var result = JsonSerializer.Serialize(responseModel, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                await response.WriteAsync(result);
             }
         }
     }
