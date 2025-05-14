@@ -5,12 +5,12 @@ using TelecomCdr.Domain;
 
 namespace TelecomCdr.Infrastructure.Persistence.Repositories
 {
-    public class MssqlFailedCdrRecordRepository : IFailedCdrRecordRepository
+    public class SqlFailedCdrRecordRepository : IFailedCdrRecordRepository
     {
         private readonly AppDbContext _context;
-        private readonly ILogger<MssqlFailedCdrRecordRepository> _logger;
+        private readonly ILogger<SqlFailedCdrRecordRepository> _logger;
 
-        public MssqlFailedCdrRecordRepository(AppDbContext context, ILogger<MssqlFailedCdrRecordRepository> logger)
+        public SqlFailedCdrRecordRepository(AppDbContext context, ILogger<SqlFailedCdrRecordRepository> logger)
         {
             _context = context ?? throw new ArgumentNullException(nameof(context));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));

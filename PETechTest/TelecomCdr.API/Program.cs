@@ -114,6 +114,7 @@ namespace TelecomCdr.API
 
                 builder.Services.AddScoped<ICdrRepository, SqlCdrRepository>();
                 builder.Services.AddScoped<IJobStatusRepository, SqlJobStatusRepository>();
+                builder.Services.AddScoped<IFailedCdrRecordRepository, SqlFailedCdrRecordRepository>();
                 builder.Services.AddScoped<IFileProcessingService, CsvFileProcessingService>();
 
                 // *** Add MediatR for CQRS pattern ***

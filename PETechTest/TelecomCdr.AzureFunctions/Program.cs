@@ -27,6 +27,8 @@ public class Program
 
                 // Add other services if needed by the function constructor itself.
                 services.AddTransient<IJobStatusRepository, SqlJobStatusRepository>();
+                services.AddTransient<IFailedCdrRecordRepository, SqlFailedCdrRecordRepository>();
+                services.AddTransient<ICdrRepository, SqlCdrRepository>();
             })
             .Build();
         host.Run();
