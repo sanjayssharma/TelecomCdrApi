@@ -83,8 +83,6 @@ namespace TelecomCdr.Infrastructure.Services
             var successfullCdrBatch = new List<CallDetailRecord>();
             var failedCdrBatch = new List<FailedCdrRecord>();
             
-            int totalProcessed = 0;
-            int totalFailed = 0;
             int rowNumber = 0;
 
             var config = new CsvConfiguration(CultureInfo.InvariantCulture) { 
@@ -195,7 +193,7 @@ namespace TelecomCdr.Infrastructure.Services
                 await _failedRecordRepository.AddBatchAsync(failedCdrBatch, cancellationToken);
                 await _dbContext.SaveChangesAsync(cancellationToken);
 
-                _logger.LogInformation("Saved final batch of {BatchCount} CDRs. Total processed: {TotalFailed}. UploadCorrelationId: {UploadCorrelationId}", result.FailedRecords, totalProcessed, uploadCorrelationId);
+                _logger.LogInformation("Saved final batch of {BatchCount} CDRs. Total processed: {TotalFailed}. UploadCorrelationId: {UploadCorrelationId}", failedCdrBatch.Count, result.FailedRecords, uploadCorrelationId);
             }
 
             if (successfullCdrBatch.Count != 0)
@@ -203,10 +201,10 @@ namespace TelecomCdr.Infrastructure.Services
                 await _cdrRepository.AddBatchAsync(successfullCdrBatch, cancellationToken);
                 await _dbContext.SaveChangesAsync(cancellationToken);
 
-                _logger.LogInformation("Saved final batch of {BatchCount} CDRs. Total processed: {TotalProcessed}. UploadCorrelationId: {UploadCorrelationId}", result.SuccessfulRecords, totalProcessed, uploadCorrelationId);
+                _logger.LogInformation("Saved final batch of {BatchCount} CDRs. Total processed: {TotalProcessed}. UploadCorrelationId: {UploadCorrelationId}", successfullCdrBatch.Count, result.SuccessfulRecords, uploadCorrelationId);
             }
 
-            _logger.LogInformation("Finished processing CDR data. Total processed: {TotalProcessed}, Total failed: {TotalFailed}. UploadCorrelationId: {UploadCorrelationId}", totalProcessed, totalFailed, uploadCorrelationId);
+            _logger.LogInformation("Finished processing CDR data. Total processed: {TotalProcessed}, Total failed: {TotalFailed}. UploadCorrelationId: {UploadCorrelationId}", result.SuccessfulRecords, result.FailedRecords, uploadCorrelationId);
 
             return result;
         }
