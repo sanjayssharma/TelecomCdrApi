@@ -1,5 +1,5 @@
 ﻿using MediatR;
-using TelecomCdr.Core.Models.DomainModels;
+using TelecomCdr.Domain;
 
 namespace TelecomCdr.Core.Features.CdrRetrieval.Queries
 {

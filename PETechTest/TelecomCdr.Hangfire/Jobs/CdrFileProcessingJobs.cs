@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
-using TelecomCdr.Core.Interfaces;
-using TelecomCdr.Core.Models.DomainModel;
+using TelecomCdr.Abstraction.Interfaces.Repository;
+using TelecomCdr.Abstraction.Interfaces.Service;
+using TelecomCdr.Domain;
 
 namespace TelecomCdr.Hangfire.Jobs
 {

@@ -4,8 +4,8 @@ using System.ComponentModel.DataAnnotations;
 using TelecomCdr.Core.Features.CdrProcessing.Commands;
 using TelecomCdr.Core.Features.CdrRetrieval.Queries;
 using TelecomCdr.Core.Filters;
-using TelecomCdr.Core.Models.DomainModels;
-using TelecomCdr.Core.Models.DTO;
+using TelecomCdr.Core.Models;
+using TelecomCdr.Domain;
 
 namespace TelecomCdr.API.Controllers
 {
@@ -56,7 +56,8 @@ namespace TelecomCdr.API.Controllers
             var command = new ProcessCdrFileCommand(file, correlationId);
             await _mediator.Send(command);
 
-            return Accepted(new { Message = "File received and processing started.", CorrelationId = correlationId });
+            // Return relevant message
+            return Ok(new { Message = "File received and processing started.", CorrelationId = correlationId });
         }
 
         [HttpPost("upload-large")]

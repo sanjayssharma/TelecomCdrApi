@@ -1,9 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Hangfire;
-using Hangfire.SqlServer;
-using TelecomCdr.Core.Interfaces;
-using TelecomCdr.Core.Infrastructure.Services;
+using TelecomCdr.Infrastructure.Persistence.Repositories;
+using TelecomCdr.Abstraction.Interfaces.Repository;
 
 public class Program
 {

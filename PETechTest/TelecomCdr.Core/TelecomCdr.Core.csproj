@@ -20,7 +20,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\TelecomCdr.Data\TelecomCdr.Data.csproj" />
+    <ProjectReference Include="..\TelecomCdr.Abstraction\TelecomCdr.Abstraction.csproj" />
+    <ProjectReference Include="..\TelecomCdr.Domain\TelecomCdr.Domain.csproj" />
   </ItemGroup>
 
 </Project>

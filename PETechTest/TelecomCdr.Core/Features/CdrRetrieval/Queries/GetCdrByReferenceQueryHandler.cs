@@ -1,7 +1,7 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
-using TelecomCdr.Core.Interfaces;
-using TelecomCdr.Core.Models.DomainModels;
+using TelecomCdr.Abstraction.Interfaces.Repository;
+using TelecomCdr.Domain;
 
 namespace TelecomCdr.Core.Features.CdrRetrieval.Queries
 {

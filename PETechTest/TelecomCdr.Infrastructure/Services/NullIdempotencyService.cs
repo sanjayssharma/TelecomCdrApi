@@ -1,7 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
-using TelecomCdr.Core.Interfaces;
+using TelecomCdr.Abstraction.Interfaces.Service;
 
-namespace TelecomCdr.Core.Infrastructure.Services
+namespace TelecomCdr.Infrastructure.Services
 {
     /// <summary>
     /// A null object implementation of the idempotency service.

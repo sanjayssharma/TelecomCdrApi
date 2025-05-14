@@ -3,9 +3,10 @@ using MediatR;
 using System.IO;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using TelecomCdr.Core.Interfaces;
-using TelecomCdr.Core.Models.DomainModel;
 using Microsoft.AspNetCore.Http;
+using TelecomCdr.Domain;
+using TelecomCdr.Abstraction.Interfaces.Service;
+using TelecomCdr.Abstraction.Interfaces.Repository;
 
 namespace TelecomCdr.Core.Features.CdrProcessing.Commands
 {

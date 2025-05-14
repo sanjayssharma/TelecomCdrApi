@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\TelecomCdr.Hangfire\TelecomCdr.Hangfire.csproj" />
+    <ProjectReference Include="..\TelecomCdr.Infrastructure\TelecomCdr.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Update="host.json">

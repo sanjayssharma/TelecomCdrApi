@@ -2,8 +2,8 @@
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using TelecomCdr.Core.Interfaces;
 using System.Security.Cryptography;
+using TelecomCdr.Abstraction.Interfaces.Service;
 
 namespace TelecomCdr.Core.Filters
 {

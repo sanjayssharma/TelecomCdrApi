@@ -1,4 +1,4 @@
-﻿namespace TelecomCdr.Core.Interfaces
+﻿namespace TelecomCdr.Abstraction.Interfaces.Service
 {
     public interface IBlobStorageService
     {

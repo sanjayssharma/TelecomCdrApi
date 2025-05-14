@@ -1,4 +1,4 @@
-﻿namespace TelecomCdr.Core.Models.DTO
+﻿namespace TelecomCdr.Core.Models
 {
     public class PagedResponse<T>
     {

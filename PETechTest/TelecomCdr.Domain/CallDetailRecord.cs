@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
 
-namespace TelecomCdr.Core.Models.DomainModels
+namespace TelecomCdr.Domain
 {
     [Table("call_detail_records")]
     public class CallDetailRecord

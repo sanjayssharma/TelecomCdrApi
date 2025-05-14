@@ -1,6 +1,6 @@
 ﻿using System.Text.Json.Serialization;
 
-namespace TelecomCdr.Core.Models.DTO
+namespace TelecomCdr.Core.Models
 {
     /// <summary>
     /// Represents a standardized error response from the API.

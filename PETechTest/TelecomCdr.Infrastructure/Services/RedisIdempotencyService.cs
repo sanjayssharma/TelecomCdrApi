@@ -2,9 +2,9 @@
 using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 using System.Text.Json;
-using TelecomCdr.Core.Interfaces;
+using TelecomCdr.Abstraction.Interfaces.Service;
 
-namespace TelecomCdr.Core.Infrastructure.Services
+namespace TelecomCdr.Infrastructure.Services
 {
     /// <summary>
     /// Implements IIdempotencyService using Redis as the backing store.

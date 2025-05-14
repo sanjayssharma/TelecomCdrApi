@@ -1,4 +1,4 @@
-﻿namespace TelecomCdr.Core.Interfaces
+﻿namespace TelecomCdr.Abstraction.Interfaces.Service
 {
     /// <summary>
     /// Service for handling idempotency checks and caching responses.

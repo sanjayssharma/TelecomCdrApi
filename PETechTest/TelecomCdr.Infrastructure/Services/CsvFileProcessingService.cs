@@ -2,27 +2,52 @@
 using CsvHelper.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
-using TelecomCdr.Core.Infrastructure.Persistence;
-using TelecomCdr.Core.Interfaces;
-using TelecomCdr.Core.Models.DomainModels;
+using TelecomCdr.Abstraction.Interfaces.Repository;
+using TelecomCdr.Abstraction.Interfaces.Service;
+using TelecomCdr.Domain;
+using TelecomCdr.Infrastructure.Persistence.Repositories;
 
-namespace TelecomCdr.Core.Infrastructure.Services
+namespace TelecomCdr.Infrastructure.Services
 {
+
+    // Temporary DTO for CSV parsing within this service
+    internal class CdrRecordDto
+    {
+        public string? CallerId { get; set; }
+        public string? Recipient { get; set; }
+        public string? CallDate { get; set; } // Expects "dd/MM/yyyy"
+        public string? EndTime { get; set; }  // Expects "HH:mm:ss"
+        public int? Duration { get; set; }
+        public decimal? Cost { get; set; }
+        public string? Reference { get; set; }
+        public string? Currency { get; set; }
+    }
+
+    public class FileProcessingResult
+    {
+        public int SuccessfulRecords { get; set; }
+        public int FailedRecords { get; set; }
+        public List<string> ErrorMessages { get; } = new List<string>();
+    }
+
     public class CsvFileProcessingService : IFileProcessingService
     {
-        private readonly ICdrRepository _cdrRepository;
         private readonly AppDbContext _dbContext;
+        private readonly ICdrRepository _cdrRepository;
+        private readonly IFailedCdrRecordRepository _failedRecordRepository;
         private readonly IBlobStorageService _blobStorageService;
         private readonly ILogger<CsvFileProcessingService> _logger;
         private const int BatchSize = 1000;
 
         public CsvFileProcessingService(
             ICdrRepository cdrRepository,
+            IFailedCdrRecordRepository failedRecordRepository,
             AppDbContext dbContext,
             IBlobStorageService blobStorageService,
             ILogger<CsvFileProcessingService> logger)
         {
             _cdrRepository = cdrRepository ?? throw new ArgumentNullException(nameof(cdrRepository));
+            _failedRecordRepository = failedRecordRepository ?? throw new ArgumentNullException(nameof(failedRecordRepository));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _blobStorageService = blobStorageService ?? throw new ArgumentNullException(nameof(blobStorageService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -75,7 +100,10 @@ namespace TelecomCdr.Core.Infrastructure.Services
                 {
                     // Parse date and time components
                     var callDatePart = DateTime.ParseExact(recordDto.CallDate, "dd/MM/yyyy", CultureInfo.InvariantCulture);
-                    var endTimePart = TimeSpan.ParseExact(recordDto.EndTime, "HH:mm:ss", CultureInfo.InvariantCulture);
+                    if (!TimeSpan.TryParse(recordDto.EndTime, out TimeSpan endTimePart))
+                    {
+                        _logger.LogWarning("Unable to parseEndTime for Reference {CdrReference}, CorrelationId: {CorrelationId}", recordDto.Reference, uploadCorrelationId);
+                    }
                     //var callEndDateTime = callDatePart.Date + endTimePart;
 
                     var cdr = new CallDetailRecord(

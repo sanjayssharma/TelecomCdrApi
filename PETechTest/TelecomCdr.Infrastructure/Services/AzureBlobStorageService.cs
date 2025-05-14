@@ -1,9 +1,9 @@
 ﻿using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Microsoft.Extensions.Logging;
-using TelecomCdr.Core.Interfaces;
+using TelecomCdr.Abstraction.Interfaces.Service;
 
-namespace TelecomCdr.Core.Infrastructure.Services
+namespace TelecomCdr.Infrastructure.Services
 {
     public class AzureBlobStorageService : IBlobStorageService
     {

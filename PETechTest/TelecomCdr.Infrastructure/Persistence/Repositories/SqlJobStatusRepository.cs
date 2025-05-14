@@ -1,10 +1,9 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using TelecomCdr.Core.Infrastructure.Persistence;
-using TelecomCdr.Core.Interfaces;
-using TelecomCdr.Core.Models.DomainModel;
+using TelecomCdr.Abstraction.Interfaces.Repository;
+using TelecomCdr.Domain;
 
-namespace TelecomCdr.Core.Infrastructure.Services
+namespace TelecomCdr.Infrastructure.Persistence.Repositories
 {
     public class SqlJobStatusRepository : IJobStatusRepository
     {

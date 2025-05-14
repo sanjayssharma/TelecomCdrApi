@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
-using TelecomCdr.Core.Interfaces;
+using TelecomCdr.Abstraction.Interfaces.Repository;
+using TelecomCdr.Domain;
 
 namespace TelecomCdr.API.Controllers
 {
@@ -7,7 +8,7 @@ namespace TelecomCdr.API.Controllers
     [ApiController]
     public class JobStatusController : ControllerBase
     {
-        private readonly IJobStatusRepository _jobStatusRepository; // Injected dependency
+        private readonly IJobStatusRepository _jobStatusRepository;
         private readonly ILogger<JobStatusController> _logger;
 
         public JobStatusController(IJobStatusRepository jobStatusRepository, ILogger<JobStatusController> logger)
@@ -17,7 +18,7 @@ namespace TelecomCdr.API.Controllers
         }
 
         [HttpGet("{correlationId}")]
-        [ProducesResponseType(typeof(Core.Models.DomainModel.JobStatus), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(JobStatus), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetJobStatus(Guid correlationId)
         {

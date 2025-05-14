@@ -1,6 +1,6 @@
-﻿using TelecomCdr.Core.Models.DomainModels;
+﻿using TelecomCdr.Domain;
 
-namespace TelecomCdr.Core.Interfaces
+namespace TelecomCdr.Abstraction.Interfaces.Repository
 {
     public interface ICdrRepository
     {

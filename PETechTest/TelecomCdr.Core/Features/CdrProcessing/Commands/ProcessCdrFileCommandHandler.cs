@@ -1,6 +1,6 @@
 ﻿using MediatR;
 using Microsoft.Extensions.Logging;
-using TelecomCdr.Core.Interfaces;
+using TelecomCdr.Abstraction.Interfaces.Service;
 
 namespace TelecomCdr.Core.Features.CdrProcessing.Commands
 {
@@ -23,6 +23,7 @@ namespace TelecomCdr.Core.Features.CdrProcessing.Commands
 
             using var stream = request.File.OpenReadStream();
             // Pass the request's CorrelationId as the uploadCorrelationId for the records
+            // Do we need to a partial upload, and what about the bad data?
             await _fileProcessingService.ProcessAndStoreCdrFileAsync(stream, request.CorrelationId, cancellationToken);
 
             _logger.LogInformation("Successfully processed CDR file {FileName} with CorrelationId {CorrelationId} for direct storage.", request.File.FileName, request.CorrelationId);

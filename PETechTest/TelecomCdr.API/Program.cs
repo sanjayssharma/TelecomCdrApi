@@ -4,9 +4,6 @@ using Hangfire;
 using TelecomCdr.API.Middlewares;
 using TelecomCdr.Core.Features.CdrProcessing.Commands;
 using TelecomCdr.Core.Features.CdrProcessing.Validators;
-using TelecomCdr.Core.Infrastructure.Persistence;
-using TelecomCdr.Core.Infrastructure.Services;
-using TelecomCdr.Core.Interfaces;
 using Hangfire.SqlServer;
 using Serilog;
 using Serilog.Sinks.ApplicationInsights.TelemetryConverters;
@@ -15,7 +12,10 @@ using FluentValidation;
 using StackExchange.Redis;
 using TelecomCdr.Core.Filters;
 using Hangfire.Dashboard;
-using HangfireAuth = Hangfire.Dashboard;
+using TelecomCdr.Infrastructure.Persistence.Repositories;
+using TelecomCdr.Infrastructure.Services;
+using TelecomCdr.Abstraction.Interfaces.Service;
+using TelecomCdr.Abstraction.Interfaces.Repository;
 
 namespace TelecomCdr.API
 {
@@ -257,7 +257,7 @@ namespace TelecomCdr.API
             }
             catch (Exception ex)
             {
-                Log.Fatal(ex, "Cdr.Api host terminated unexpectedly");
+                Log.Fatal(ex, "TelecomCdr.Api host terminated unexpectedly");
             }
             finally
             {

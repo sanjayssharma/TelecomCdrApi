@@ -1,7 +1,8 @@
-﻿using TelecomCdr.Core.Interfaces;
-using TelecomCdr.Core.Models.DomainModels;
+﻿
+using TelecomCdr.Abstraction.Interfaces.Repository;
+using TelecomCdr.Domain;
 
-namespace TelecomCdr.Core.Infrastructure.Persistence
+namespace TelecomCdr.Infrastructure.Persistence.Repositories
 {
     public class MongDbCdrRepository : ICdrRepository
     {
