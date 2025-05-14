@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Interfaces.Service;
+using TelecomCdr.Abstraction.Models;
 using TelecomCdr.Domain;
 
 namespace TelecomCdr.Hangfire.Jobs
@@ -51,6 +52,8 @@ namespace TelecomCdr.Hangfire.Jobs
             _logger.LogInformation("Hangfire job started: Processing blob '{BlobName}' from container '{ContainerName}' with Correlation ID '{CorrelationId}'.",
                 blobName, containerName, uploadCorrelationId);
 
+            FileProcessingResult processingResult;
+
             try
             {
                 // *** Usage Point 3: Updating status to Processing ***
@@ -64,28 +67,66 @@ namespace TelecomCdr.Hangfire.Jobs
             try
             {
                 // The IFileProcessingService handles downloading from blob, parsing, and storing.
-                // It needs to be implemented in Cdr.Infrastructure.
-                await _fileProcessingService.ProcessAndStoreCdrFileFromBlobAsync(blobName, containerName, uploadCorrelationId);
+                processingResult = await _fileProcessingService.ProcessAndStoreCdrFileFromBlobAsync(blobName, containerName, uploadCorrelationId);
+
+                string successMessage = $"File processed. Successful records: {processingResult.SuccessfulRecords}, Failed records: {processingResult.FailedRecords}.";
+                if (processingResult.ErrorMessages.Any())
+                {
+                    successMessage += $" Some errors: {string.Join("; ", processingResult.ErrorMessages.Take(3))}"; // Show first few errors
+                }
+
+                ProcessingStatus finalStatus = ProcessingStatus.Failed; // Default to Failed
+                if (processingResult.SuccessfulRecords > 0 && processingResult.FailedRecords == 0)
+                {
+                    finalStatus = ProcessingStatus.Succeeded;
+                }
+                else if (processingResult.SuccessfulRecords > 0 && processingResult.FailedRecords > 0)
+                {
+                    finalStatus = ProcessingStatus.PartiallySucceeded;
+                }
+
+                // If SuccessfulRecords is 0 and FailedRecords > 0, it remains Failed.
+                // If both are 0 but there were general file errors (e.g. file not found), it also remains Failed.
+
+                await _jobStatusRepository.UpdateStatusAsync(
+                    uploadCorrelationId,
+                    finalStatus,
+                    successMessage.Length > 2000 ? successMessage.Substring(0, 2000) : successMessage, // Truncate message
+                    processingResult.SuccessfulRecords,
+                    processingResult.FailedRecords);
+
+                _logger.LogInformation("Hangfire job processing outcome for Correlation ID '{CorrelationId}': {Status} - {Message}",
+                    uploadCorrelationId, finalStatus, successMessage);
+
+                // If there were critical errors that should fail the Hangfire job itself (for retries)
+                if (finalStatus == ProcessingStatus.Failed && processingResult.SuccessfulRecords == 0 && processingResult.FailedRecords == 0 && processingResult.ErrorMessages.Any(m => m.Contains("Blob") && m.Contains("not found")))
+                {
+                    // This indicates a file level error, not just row errors.
+                    throw new InvalidOperationException($"Critical file processing error for {blobName}: {string.Join("; ", processingResult.ErrorMessages)}");
+                }
 
                 _logger.LogInformation("Hangfire job completed: Successfully processed blob '{BlobName}' with Correlation ID '{CorrelationId}'.",
                     blobName, uploadCorrelationId);
             }
-            catch (Exception ex)
+            catch (Exception ex) // Catch exceptions from ProcessAndStoreCdrFileFromBlobAsync or status updates
             {
-                _logger.LogError(ex, "Hangfire job failed: Error processing blob '{BlobName}' with Correlation ID '{CorrelationId}'.",
+                _logger.LogError(ex, "Hangfire job CRITICAL FAILURE: Error processing blob '{BlobName}' with Correlation ID '{CorrelationId}'.",
                     blobName, uploadCorrelationId);
-
                 try
                 {
-                    // *** Usage Point 5: Updating status to Failed ***
-                    await _jobStatusRepository.UpdateStatusAsync(uploadCorrelationId, ProcessingStatus.Failed, $"Processing failed: {ex.Message}");
+                    await _jobStatusRepository.UpdateStatusAsync(
+                        uploadCorrelationId,
+                        ProcessingStatus.Failed,
+                        $"Critical processing error: {ex.Message.Substring(0, Math.Min(ex.Message.Length, 1900))}", // Truncate
+                        0, // No successful records confirmed
+                        null // Unknown failed records if this is a general crash
+                        );
                 }
                 catch (Exception statusEx)
                 {
-                    _logger.LogError(statusEx, "Additionally, failed to update job status to 'Failed' for Correlation ID '{CorrelationId}'.", uploadCorrelationId);
+                    _logger.LogError(statusEx, "Additionally, failed to update job status to 'Failed' after CRITICAL error for Correlation ID '{CorrelationId}'.", uploadCorrelationId);
                 }
-                // Rethrow the exception so Hangfire can mark the job as failed and retry according to its policy.
-                throw;
+                throw; // Rethrow original exception for Hangfire to handle (e.g., retry)
             }
         }
     }

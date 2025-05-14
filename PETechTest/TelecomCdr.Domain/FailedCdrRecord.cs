@@ -3,6 +3,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace TelecomCdr.Domain
 {
+    [Table("call_detail_record_failures")]
     public class FailedCdrRecord
     {
         [Key]

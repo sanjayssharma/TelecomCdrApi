@@ -76,6 +76,7 @@ BEGIN
     UploadCorrelationId CHAR(36) , -- Unique identifier correlating to the upload operation
     RowNumberInCsv int,                        -- row number in the actual csv
     RawRowData VARCHAR(1024),               -- csv comma delimited row data
+	ErrorMessage VARCHAR(2000),
     FailedAtUtc DATETIME NOT NULL,           -- failure date and time of when the call ended
 );
 
@@ -100,3 +101,29 @@ BEGIN
 END;
 GO
 
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='JobStatuses' and xtype='U')
+BEGIN
+    CREATE TABLE JobStatuses (
+        CorrelationId NVARCHAR(100) NOT NULL PRIMARY KEY, 
+        Status NVARCHAR(50) NOT NULL,                    
+        Message NVARCHAR(2000) NULL,                     
+        ProcessedRecordsCount INT NULL,
+        FailedRecordsCount INT NULL,
+        OriginalFileName NVARCHAR(255) NULL,            
+        BlobName NVARCHAR(255) NULL,                    
+        ContainerName NVARCHAR(100) NULL,              
+        CreatedAtUtc DATETIME2 NOT NULL,
+        LastUpdatedAtUtc DATETIME2 NOT NULL
+    );
+
+    PRINT 'Table JobStatuses created.';
+
+    CREATE INDEX IX_JobStatuses_LastUpdatedAtUtc ON JobStatuses (LastUpdatedAtUtc);
+    PRINT 'Index IX_JobStatuses_LastUpdatedAtUtc created on JobStatuses table.';
+
+END
+ELSE
+BEGIN
+    PRINT 'Table JobStatuses already exists.';
+END
+GO

@@ -4,32 +4,12 @@ using Microsoft.Extensions.Logging;
 using System.Globalization;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Interfaces.Service;
+using TelecomCdr.Abstraction.Models;
 using TelecomCdr.Domain;
 using TelecomCdr.Infrastructure.Persistence.Repositories;
 
 namespace TelecomCdr.Infrastructure.Services
 {
-
-    // Temporary DTO for CSV parsing within this service
-    internal class CdrRecordDto
-    {
-        public string? CallerId { get; set; }
-        public string? Recipient { get; set; }
-        public string? CallDate { get; set; } // Expects "dd/MM/yyyy"
-        public string? EndTime { get; set; }  // Expects "HH:mm:ss"
-        public int? Duration { get; set; }
-        public decimal? Cost { get; set; }
-        public string? Reference { get; set; }
-        public string? Currency { get; set; }
-    }
-
-    public class FileProcessingResult
-    {
-        public int SuccessfulRecords { get; set; }
-        public int FailedRecords { get; set; }
-        public List<string> ErrorMessages { get; } = new List<string>();
-    }
-
     public class CsvFileProcessingService : IFileProcessingService
     {
         private readonly AppDbContext _dbContext;
@@ -53,16 +33,20 @@ namespace TelecomCdr.Infrastructure.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task ProcessAndStoreCdrFileAsync(Stream fileStream, Guid uploadCorrelationId, CancellationToken cancellationToken = default)
+        public async Task<FileProcessingResult> ProcessAndStoreCdrFileAsync(Stream fileStream, Guid uploadCorrelationId, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Processing and storing CDR data from stream. UploadCorrelationId: {UploadCorrelationId}", uploadCorrelationId);
-            await ProcessInternalAsync(fileStream, uploadCorrelationId, cancellationToken);
+
+            var result = await ProcessInternalAsync(fileStream, uploadCorrelationId, cancellationToken);
+            return result;
         }
 
-        public async Task ProcessAndStoreCdrFileFromBlobAsync(string containerName, string blobName, Guid originalUploadCorrelationId, CancellationToken cancellationToken = default)
+        public async Task<FileProcessingResult> ProcessAndStoreCdrFileFromBlobAsync(string containerName, string blobName, Guid originalUploadCorrelationId, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation("Processing and storing CDR data from blob: {ContainerName}/{BlobName}. OriginalUploadCorrelationId: {OriginalUploadCorrelationId}",
                 containerName, blobName, originalUploadCorrelationId);
+
+            var result = new FileProcessingResult();
 
             Stream fileStream;
             try
@@ -73,94 +57,201 @@ namespace TelecomCdr.Infrastructure.Services
             {
                 _logger.LogError(ex, "Failed to download blob {BlobName} from container {ContainerName} for processing. OriginalUploadCorrelationId: {OriginalUploadCorrelationId}",
                     blobName, containerName, originalUploadCorrelationId);
-                return;
+
+                result.ErrorMessages.Add($"Exception ocurred when trying to access the file: {blobName}, uploadCorrelationId: {originalUploadCorrelationId}");
+                return result;
             }
 
             using (fileStream)
             {
-                await ProcessInternalAsync(fileStream, originalUploadCorrelationId, cancellationToken);
+                if (fileStream == null || fileStream == Stream.Null || fileStream.Length == 0)
+                {
+                    _logger.LogError("Blob {BlobName} from container {ContainerName} not found or is empty.", blobName, containerName);
+                    
+                    result.ErrorMessages.Add($"Blob {blobName} not found in container {containerName} or is empty.");
+                    // No records processed or failed if file is missing/empty
+                    return result; // Or throw an exception FileNotFoundException
+                }
+               return await ProcessInternalAsync(fileStream, originalUploadCorrelationId, cancellationToken);
             }
         }
 
-        private async Task ProcessInternalAsync(Stream fileStream, Guid uploadCorrelationId, CancellationToken cancellationToken)
+        private async Task<FileProcessingResult> ProcessInternalAsync(Stream fileStream, Guid uploadCorrelationId, CancellationToken cancellationToken)
         {
-            var recordsBatch = new List<CallDetailRecord>();
+            var result = new FileProcessingResult();
+            //var recordsBatch = new List<CallDetailRecord>();
+            var successfullCdrBatch = new List<CallDetailRecord>();
+            var failedCdrBatch = new List<FailedCdrRecord>();
+            
             int totalProcessed = 0;
             int totalFailed = 0;
-            var config = new CsvConfiguration(CultureInfo.InvariantCulture) { HasHeaderRecord = true, MissingFieldFound = null, HeaderValidated = null, TrimOptions = TrimOptions.Trim };
+            int rowNumber = 0;
 
-            using var reader = new StreamReader(fileStream);
-            using var csv = new CsvReader(reader, config);
-            csv.Context.RegisterClassMap<CdrFileRecordDtoMap>(); // Ensure DTO mapping is used
+            var config = new CsvConfiguration(CultureInfo.InvariantCulture) { 
+                HasHeaderRecord = true, 
+                MissingFieldFound = null, 
+                HeaderValidated = null, 
+                TrimOptions = TrimOptions.Trim,
+                BadDataFound = context => // Handle bad data per row
+                {
+                    _logger.LogWarning("Bad data found in CSV row: {RawRow}. Field: {Field}, Context: {Context}", context.RawRecord, context.Field, context.Context);
+                }
+            };
 
-            await foreach (var recordDto in csv.GetRecordsAsync<CdrFileRecordDto>(cancellationToken))
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
+                using var reader = new StreamReader(fileStream);
+                using var csv = new CsvReader(reader, config);
+                csv.Context.RegisterClassMap<CdrFileRecordDtoMap>(); // Ensure DTO mapping is used
+
+                await foreach (var recordDto in csv.GetRecordsAsync<CdrFileRecordDto>(cancellationToken))
                 {
-                    // Parse date and time components
-                    var callDatePart = DateTime.ParseExact(recordDto.CallDate, "dd/MM/yyyy", CultureInfo.InvariantCulture);
-                    if (!TimeSpan.TryParse(recordDto.EndTime, out TimeSpan endTimePart))
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    // Get the raw string of the current row
+                    var rawRow = csv.Context.Parser?.RawRecord ?? string.Empty;
+
+                    // Granular Try-catch for each row.
+                    try
                     {
-                        _logger.LogWarning("Unable to parseEndTime for Reference {CdrReference}, CorrelationId: {CorrelationId}", recordDto.Reference, uploadCorrelationId);
+                        rowNumber++;
+
+                        // Validate the row and adjust the rules accordingly. So invalid data could be identified and recorded.
+                        await ValidateRowAsync(recordDto);
+
+                        // Parse date and time components
+                        var callDatePart = DateTime.ParseExact(recordDto.CallDate, "dd/MM/yyyy", CultureInfo.InvariantCulture);
+                        if (!TimeSpan.TryParse(recordDto.EndTime, out TimeSpan endTimePart))
+                        {
+                            _logger.LogWarning("Unable to parseEndTime for Reference {CdrReference}, CorrelationId: {CorrelationId}", recordDto.Reference, uploadCorrelationId);
+                        }
+
+                        var cdr = new CallDetailRecord(
+                            recordDto.CallerId,
+                            recordDto.Recipient,
+                            callDatePart,
+                            endTimePart,
+                            recordDto.Duration.Value,
+                            recordDto.Cost.Value,
+                            recordDto.Reference,
+                            recordDto.Currency,
+                            uploadCorrelationId
+                        );
+                        successfullCdrBatch.Add(cdr);
+                        result.SuccessfulRecords++;
+
+                        if (successfullCdrBatch.Count >= BatchSize)
+                        {
+                            await _cdrRepository.AddBatchAsync(successfullCdrBatch, cancellationToken);
+                            await _dbContext.SaveChangesAsync(cancellationToken);
+
+                            _logger.LogInformation("Saved batch of {BatchCount} CDRs. Total processed so far: {TotalProcessed}. UploadCorrelationId: {UploadCorrelationId}", successfullCdrBatch.Count, result.SuccessfulRecords, uploadCorrelationId);
+                            successfullCdrBatch.Clear();
+                        }
                     }
-                    //var callEndDateTime = callDatePart.Date + endTimePart;
-
-                    var cdr = new CallDetailRecord(
-                        recordDto.CallerId,
-                        recordDto.Recipient,
-                        callDatePart,
-                        endTimePart,
-                        recordDto.Duration,
-                        recordDto.Cost,
-                        recordDto.Reference,
-                        recordDto.Currency,
-                        uploadCorrelationId
-                    );
-                    recordsBatch.Add(cdr);
-                    totalProcessed++;
-
-                    if (recordsBatch.Count >= BatchSize)
+                    catch (Exception ex)
                     {
-                        await _cdrRepository.AddBatchAsync(recordsBatch, cancellationToken);
-                        await _dbContext.SaveChangesAsync(cancellationToken);
-                        _logger.LogInformation("Saved batch of {BatchCount} CDRs. Total processed so far: {TotalProcessed}. UploadCorrelationId: {UploadCorrelationId}", recordsBatch.Count, totalProcessed, uploadCorrelationId);
-                        recordsBatch.Clear();
+                        // We would like to save the faile records to our repository.
+                        result.FailedRecords++;
+                        failedCdrBatch.Add(new FailedCdrRecord
+                        {
+                            UploadCorrelationId = uploadCorrelationId.ToString(),
+                            RowNumberInCsv = rowNumber,
+                            RawRowData = rawRow.Length > 1024 ? rawRow.Substring(0, 1024) : rawRow, // Truncate if too long
+                            ErrorMessage = ex.Message.Length > 2000 ? ex.Message.Substring(0, 2000) : ex.Message, // Truncate
+                            FailedAtUtc = DateTime.UtcNow
+                        });
+
+                        if (failedCdrBatch.Count >= BatchSize)
+                        {
+                            await _failedRecordRepository.AddBatchAsync(failedCdrBatch, cancellationToken);
+                            await _dbContext.SaveChangesAsync(cancellationToken);
+
+                            _logger.LogInformation("Saved batch of {BatchCount} Failed CDRs. Total failed so far: {TotalFailed}. UploadCorrelationId: {UploadCorrelationId}", failedCdrBatch.Count, result.FailedRecords, uploadCorrelationId);
+                            failedCdrBatch.Clear();
+                        }
+
+                        result.ErrorMessages.Add($"Row {rowNumber}: {ex.Message}");
+                        _logger.LogWarning(ex, "Failed to process or map record for row {RowNumber} with reference {Reference}. UploadCorrelationId: {UploadCorrelationId}. Skipping.", rowNumber, recordDto.Reference, uploadCorrelationId);
                     }
                 }
-                catch (FormatException ex)
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Critical error during CSV parsing for CorrelationId {CorrelationId} after row {RowNumber}.", uploadCorrelationId, rowNumber);
+                result.ErrorMessages.Add($"Critical CSV parsing error: {ex.Message}");
+                // Potentially mark all remaining as failed or handle as a general file failure
+                // For simplicity here, we'll rely on row-level failures already captured.
+                // If this exception occurs, it might mean no records were processed.
+                if (!successfullCdrBatch.Any() && !failedCdrBatch.Any())
                 {
-                    totalFailed++;
-                    _logger.LogWarning(ex, "Failed to parse date/time for record with reference {Reference}. CSV Date: '{CsvDate}', CSV Time: '{CsvTime}'. UploadCorrelationId: {UploadCorrelationId}. Skipping.", recordDto.Reference, recordDto.CallDate, recordDto.EndTime, uploadCorrelationId);
-                }
-                catch (Exception ex)
-                {
-                    totalFailed++;
-                    _logger.LogWarning(ex, "Failed to process or map record for reference {Reference}. UploadCorrelationId: {UploadCorrelationId}. Skipping.", recordDto.Reference, uploadCorrelationId);
+                    // This means a very early error, possibly before any rows were read.
+                    // We might create a single 'failed file' record if desired.
                 }
             }
 
-            // TODO: What happens to the failed records? Because they are not saved and lost. Hence, this would be a partial upload.
-
-            if (recordsBatch.Any())
+            if (failedCdrBatch.Count != 0)
             {
-                await _cdrRepository.AddBatchAsync(recordsBatch, cancellationToken);
+                await _failedRecordRepository.AddBatchAsync(failedCdrBatch, cancellationToken);
                 await _dbContext.SaveChangesAsync(cancellationToken);
-                _logger.LogInformation("Saved final batch of {BatchCount} CDRs. Total processed: {TotalProcessed}. UploadCorrelationId: {UploadCorrelationId}", recordsBatch.Count, totalProcessed, uploadCorrelationId);
+
+                _logger.LogInformation("Saved final batch of {BatchCount} CDRs. Total processed: {TotalFailed}. UploadCorrelationId: {UploadCorrelationId}", result.FailedRecords, totalProcessed, uploadCorrelationId);
+            }
+
+            if (successfullCdrBatch.Count != 0)
+            {
+                await _cdrRepository.AddBatchAsync(successfullCdrBatch, cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                _logger.LogInformation("Saved final batch of {BatchCount} CDRs. Total processed: {TotalProcessed}. UploadCorrelationId: {UploadCorrelationId}", result.SuccessfulRecords, totalProcessed, uploadCorrelationId);
             }
 
             _logger.LogInformation("Finished processing CDR data. Total processed: {TotalProcessed}, Total failed: {TotalFailed}. UploadCorrelationId: {UploadCorrelationId}", totalProcessed, totalFailed, uploadCorrelationId);
+
+            return result;
         }
 
-        // DTO for CsvHelper mapping - still reads original CSV columns
+        private async Task ValidateRowAsync(CdrFileRecordDto recordDto)
+        {
+            if (string.IsNullOrWhiteSpace(recordDto.Reference))
+            {
+                throw new InvalidDataException("Reference field is missing or empty.");
+            }
+            if (string.IsNullOrWhiteSpace(recordDto.CallerId))
+            {
+                throw new InvalidDataException("CallerId field is missing or empty.");
+            }
+            if (string.IsNullOrWhiteSpace(recordDto.Recipient))
+            {
+                throw new InvalidDataException("Recipient field is missing or empty.");
+            }
+            if (string.IsNullOrWhiteSpace(recordDto.CallDate) || string.IsNullOrWhiteSpace(recordDto.EndTime))
+            {
+                throw new InvalidDataException("CallDate or EndTime is missing.");
+            }
+            if (!recordDto.Duration.HasValue)
+            {
+                throw new InvalidDataException("Duration is missing.");
+            }
+            if (!recordDto.Cost.HasValue)
+            {
+                throw new InvalidDataException("Cost is missing.");
+            }
+            if (string.IsNullOrWhiteSpace(recordDto.Currency) || recordDto.Currency.Length != 3)
+            {
+                throw new InvalidDataException("Currency is missing or not 3 characters.");
+            }
+        }
+
+        // Temporary DTO for CsvHelper mapping - still reads original CSV columns
         private class CdrFileRecordDto
         {
             public string CallerId { get; set; }
             public string Recipient { get; set; }
             public string CallDate { get; set; } // Read as string from CSV "call_date"
             public string EndTime { get; set; }  // Read as string from CSV "end_time"
-            public int Duration { get; set; }
-            public decimal Cost { get; set; }
+            public int? Duration { get; set; }
+            public decimal? Cost { get; set; }
             public string Reference { get; set; }
             public string Currency { get; set; }
         }
