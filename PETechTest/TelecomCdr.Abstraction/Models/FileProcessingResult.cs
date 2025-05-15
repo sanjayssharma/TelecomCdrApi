@@ -2,8 +2,9 @@
 {
     public class FileProcessingResult
     {
-        public int SuccessfulRecords { get; set; }
-        public int FailedRecords { get; set; }
+        public bool Success { get; set; }
+        public int ProcessedRecordsCount { get; set; }
+        public int FailedRecordsCount { get; set; }
         public List<string> ErrorMessages { get; } = new List<string>();
     }
 }

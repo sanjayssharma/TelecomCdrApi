@@ -56,7 +56,7 @@ namespace TelecomCdr.Core.Features.CdrProcessing.Commands
 
             try
             {
-                await _jobStatusRepository.CreateAsync(initialJobStatus);
+                await _jobStatusRepository.CreateJobStatusAsync(initialJobStatus);
             }
             catch (Exception ex)
             {
@@ -73,7 +73,7 @@ namespace TelecomCdr.Core.Features.CdrProcessing.Commands
                 var metadata = new Dictionary<string, string> { { "UploadCorrelationId", request.CorrelationId.ToString() } };
 
                 using var fileStream = request.File.OpenReadStream();
-                blobUri = await _blobStorageService.UploadFileAsync(containerName, blobName, fileStream, request.File.ContentType, metadata, cancellationToken);
+                blobUri = await _blobStorageService.UploadFileAsync(containerName, blobName, fileStream, metadata, cancellationToken);
                 _logger.LogInformation("File {FileName} uploaded to {BlobUri}. CorrelationId: {CorrelationId}", request.File.FileName, blobUri, request.CorrelationId);
             }
             catch (Exception ex)

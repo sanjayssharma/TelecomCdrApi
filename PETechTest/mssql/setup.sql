@@ -29,7 +29,9 @@ GO
 PRINT 'Database setup script completed.';
 
 
--- ---------------- Create call_detail_records table ---------------------------------------------
+-- =====================================================================================
+-- call_detail_records Table for storing cdr records
+-- =====================================================================================
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'call_detail_records')
 BEGIN
 	CREATE TABLE call_detail_records (
@@ -69,11 +71,15 @@ BEGIN
 END;
 GO
 
+-- =====================================================================================
+-- call_detail_record_failures Table for logging failed cdr records
+-- =====================================================================================
+
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'call_detail_record_failures')
 BEGIN
 	CREATE TABLE call_detail_record_failures (
 	Id BIGINT identity(1,1) PRIMARY KEY,
-    UploadCorrelationId CHAR(36) , -- Unique identifier correlating to the upload operation
+    UploadCorrelationId UNIQUEIDENTIFIER , -- Unique identifier correlating to the upload operation
     RowNumberInCsv int,                        -- row number in the actual csv
     RawRowData VARCHAR(1024),               -- csv comma delimited row data
 	ErrorMessage VARCHAR(2000),
@@ -86,44 +92,106 @@ CREATE NONCLUSTERED INDEX idx_upload_correlation_id
 END;
 GO
 
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'cdr_ingestions')
+
+-- =====================================================================================
+-- BaseData Table for JobType Enum
+-- =====================================================================================
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='JobTypes' and xtype='U')
 BEGIN
-	CREATE TABLE cdr_ingestions (
-    Id int PRIMARY KEY NOT NULL,  -- This could be used in the call_detail_records as a foreign key, but keeping it as is for now.
-	triggered_by varchar(50) NOT NULL,
-    start_date VARCHAR(20) NOT NULL, 
-    completed_date VARCHAR(20) NOT NULL,
-    status varchar(10),
-    [error_message] varchar(500),
-	correlation_id UNIQUEIDENTIFIER NOT NULL,
-);
+	CREATE TABLE [dbo].[JobTypes] (
+    [Id]   INT NOT NULL,
+    [Name] NVARCHAR(50) NOT NULL,
+    CONSTRAINT [PK_JobTypes] PRIMARY KEY CLUSTERED ([Id] ASC)
+	);
 	
-END;
+	-- Populate JobTypes Table
+	INSERT INTO [dbo].[JobTypes] ([Id], [Name]) VALUES
+	(0, 'SingleFile'),
+	(1, 'Master'),
+	(2, 'Chunk');
+END
+ELSE
+BEGIN
+    PRINT 'Table JobTypes already exists.';
+END
 GO
 
-IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='JobStatuses' and xtype='U')
+-- =====================================================================================
+-- BaseData Table for ProcessingStatus Enum
+-- =====================================================================================
+
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ProcessingStatuses' and xtype='U')
 BEGIN
-    CREATE TABLE JobStatuses (
-        CorrelationId NVARCHAR(100) NOT NULL PRIMARY KEY, 
-        Status NVARCHAR(50) NOT NULL,                    
-        Message NVARCHAR(2000) NULL,                     
-        ProcessedRecordsCount INT NULL,
-        FailedRecordsCount INT NULL,
-        OriginalFileName NVARCHAR(255) NULL,            
-        BlobName NVARCHAR(255) NULL,                    
-        ContainerName NVARCHAR(100) NULL,              
-        CreatedAtUtc DATETIME2 NOT NULL,
-        LastUpdatedAtUtc DATETIME2 NOT NULL
-    );
+	CREATE TABLE [dbo].[ProcessingStatuses] (
+    [Id]   INT NOT NULL,
+    [Name] NVARCHAR(50) NOT NULL,
+    CONSTRAINT [PK_ProcessingStatuses] PRIMARY KEY CLUSTERED ([Id] ASC)
+);
+	
+	-- Populate ProcessingStatuses Table
+	INSERT INTO [dbo].[ProcessingStatuses] ([Id], [Name]) VALUES
+	(0, 'Accepted'),
+	(1, 'PendingQueue'),
+	(2, 'Chunking'),
+	(3, 'ChunksQueued'),
+	(4, 'QueuedForProcessing'),
+	(5, 'Processing'),
+	(6, 'Succeeded'),
+	(7, 'PartiallySucceeded'),
+	(8, 'Failed');
+END
+ELSE
+BEGIN
+    PRINT 'Table ProcessingStatuses already exists.';
+END
+GO
 
-    PRINT 'Table JobStatuses created.';
+-- =====================================================================================
+-- JobStatuses Table for tracking upload jobs
+-- =====================================================================================
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='job_statuses' and xtype='U')
+BEGIN
 
-    CREATE INDEX IX_JobStatuses_LastUpdatedAtUtc ON JobStatuses (LastUpdatedAtUtc);
-    PRINT 'Index IX_JobStatuses_LastUpdatedAtUtc created on JobStatuses table.';
+	CREATE TABLE [dbo].[job_statuses] (
+    [CorrelationId]        UNIQUEIDENTIFIER NOT NULL,  -- Primary Key, typically a GUID string
+    [ParentCorrelationId]  UNIQUEIDENTIFIER NULL,      -- Foreign key to another JobStatus (master job)
+    [JobTypeId]            INT NOT NULL,            -- Foreign Key to JobTypes.Id
+    [ProcessingStatusId]   INT NOT NULL,            -- Foreign Key to ProcessingStatuses.Id
+    [OriginalFileName]     NVARCHAR(255) NULL,
+    [BlobName]             NVARCHAR(255) NULL,
+    [ContainerName]        NVARCHAR(100) NULL,
+    [TotalChunks]          INT NULL,
+    [ProcessedChunks]      INT NULL,
+    [SuccessfulChunks]     INT NULL,
+    [FailedChunks]         INT NULL,
+    [ProcessedRecordsCount] BIGINT NULL,
+    [FailedRecordsCount]    BIGINT NULL,
+    [CreatedAtUtc]          DATETIME2 NOT NULL,
+    [LastUpdatedAtUtc]      DATETIME2 NOT NULL,
+    [Message]         		NVARCHAR(2000) NULL,
+    CONSTRAINT [PK_JobStatuses] PRIMARY KEY CLUSTERED ([CorrelationId] ASC),
+    CONSTRAINT [FK_JobStatuses_JobTypes] FOREIGN KEY ([JobTypeId]) REFERENCES [dbo].[JobTypes]([Id]),
+    CONSTRAINT [FK_JobStatuses_ProcessingStatuses] FOREIGN KEY ([ProcessingStatusId]) REFERENCES [dbo].[ProcessingStatuses]([Id])
+	);
+
+-- These help speed up queries on these columns.
+
+	CREATE NONCLUSTERED INDEX [IX_JobStatus_ParentCorrelationId]
+	ON [dbo].[job_statuses]([ParentCorrelationId] ASC)
+	WHERE [ParentCorrelationId] IS NOT NULL; -- Index only non-null values if desired, or remove WHERE for all
+
+	CREATE NONCLUSTERED INDEX [IX_JobStatus_ProcessingStatusId] -- Renamed from IX_JobStatus_Status
+	ON [dbo].[job_statuses]([ProcessingStatusId] ASC);
+
+	CREATE NONCLUSTERED INDEX [IX_JobStatus_JobTypeId] -- Renamed from IX_JobStatus_Type
+	ON [dbo].[job_statuses]([JobTypeId] ASC);
+
+	CREATE NONCLUSTERED INDEX [IX_JobStatus_CreatedAt]
+	ON [dbo].[job_statuses]([CreatedAtUtc] ASC);
 
 END
 ELSE
 BEGIN
-    PRINT 'Table JobStatuses already exists.';
+    PRINT 'Table job_statuses already exists.';
 END
 GO

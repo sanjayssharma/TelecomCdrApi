@@ -29,7 +29,7 @@ namespace TelecomCdr.API.Controllers
 
             _logger.LogInformation("Fetching job status for Correlation ID: {CorrelationId}", correlationId);
 
-            var jobStatus = await _jobStatusRepository.GetByCorrelationIdAsync(correlationId);
+            var jobStatus = await _jobStatusRepository.GetJobStatusByCorrelationIdAsync(correlationId);
 
             if (jobStatus == null)
             {
