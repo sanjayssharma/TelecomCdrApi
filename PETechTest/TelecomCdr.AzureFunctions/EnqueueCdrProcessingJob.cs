@@ -1,31 +1,34 @@
 ﻿using Hangfire;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
-using System.Runtime.ConstrainedExecution;
 using System.Text;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Interfaces.Service;
 using TelecomCdr.Domain;
+using TelecomCdr.Hangfire.Jobs;
 
 namespace TelecomCdr.AzureFunctions
 {
     public class EnqueueCdrProcessingJob
     {
-        private const long CHUNK_THRESHOLD_BYTES = 500 * 1024 * 1024; // 500MB
-        private const long TARGET_CHUNK_SIZE_BYTES = 100 * 1024 * 1024; // 100MB (adjust as needed)
+        private const long CHUNK_THRESHOLD_BYTES = 1 * 1024 * 1024; // 1MB // Threshold at which the chunking starts
+        private const long TARGET_CHUNK_SIZE_BYTES = 1 * 1024 * 1024; // 1MB (adjust as needed)
 
         private readonly IBlobStorageService _blobStorageService;
         private readonly IJobStatusRepository _jobStatusRepository;
         private readonly IBackgroundJobClient _backgroundJobClient;
+        private readonly ILogger<EnqueueCdrProcessingJob> logger;
 
         public EnqueueCdrProcessingJob(
             IBlobStorageService blobStorageService,
             IJobStatusRepository jobStatusRepository,
-            IBackgroundJobClient backgroundJobClient)
+            IBackgroundJobClient backgroundJobClient,
+            ILogger<EnqueueCdrProcessingJob> _logger)
         {
             _blobStorageService = blobStorageService ?? throw new ArgumentNullException(nameof(blobStorageService));
             _jobStatusRepository = jobStatusRepository ?? throw new ArgumentNullException(nameof(jobStatusRepository));
             _backgroundJobClient = backgroundJobClient ?? throw new ArgumentNullException(nameof(backgroundJobClient));
+            logger = _logger ?? throw new ArgumentNullException(nameof(_logger));
         }
 
         // Static constructor for one-time Hangfire client configuration.
@@ -76,10 +79,10 @@ namespace TelecomCdr.AzureFunctions
             [BlobTrigger("cdr-uploads/{blobName}", Connection = "AZURE_STORAGE_CONNECTION_STRING")] Stream myBlob, // Stream might not be directly usable for size if large, properties are better
             string blobName, // Name of the blob
             Uri blobUri, // Full URI of the blob
-            IDictionary<string, string> metadata, // Blob metadata
-            ILogger log)
+            IDictionary<string, string> metadata // Blob metadata
+            )
         {
-            log.LogInformation($"C# Blob trigger function processed blob\n Name:{blobName} \n Uri: {blobUri}");
+            logger.LogInformation($"C# Blob trigger function processed blob\n Name:{blobName} \n Uri: {blobUri}");
 
             // Extract container name from blobUri or configuration (simplified here)
             // For example, if blobUri is "https://account.blob.core.windows.net/cdr-uploads/filename.csv"
@@ -88,14 +91,14 @@ namespace TelecomCdr.AzureFunctions
 
             if (metadata == null || !metadata.TryGetValue("UploadCorrelationId", out var uploadCorrelationId) || string.IsNullOrEmpty(uploadCorrelationId))
             {
-                log.LogError($"Missing 'UploadCorrelationId' in blob metadata for {blobName}. Processing cannot continue.");
+                logger.LogError($"Missing 'UploadCorrelationId' in blob metadata for {blobName}. Processing cannot continue.");
                 // Optionally, move to an error container or log to a dead-letter queue
                 return;
             }
 
             if (!Guid.TryParse(uploadCorrelationId, out var correlationId))
             {
-                log.LogError($"Invalid 'UploadCorrelationId' in blob metadata for {blobName}. Processing cannot continue.");
+                logger.LogError($"Invalid 'UploadCorrelationId' in blob metadata for {blobName}. Processing cannot continue.");
                 return;
             }
 
@@ -112,7 +115,7 @@ namespace TelecomCdr.AzureFunctions
                 {
                     // This case should ideally be handled: maybe the API failed to create the initial record.
                     // For now, we'll create a basic one, but a robust system would have specific error handling.
-                    log.LogWarning($"Initial JobStatus not found for CorrelationId {correlationId}. Creating a new one.");
+                    logger.LogWarning($"Initial JobStatus not found for CorrelationId {correlationId}. Creating a new one.");
                     masterJobStatus = new JobStatus
                     {
                         CorrelationId = correlationId,
@@ -131,10 +134,11 @@ namespace TelecomCdr.AzureFunctions
                     masterJobStatus.ContainerName = masterJobStatus.ContainerName ?? containerName;
                 }
 
+                var chunkJobAlreadyQueued = await _jobStatusRepository.CheckJobByBlobNameExistsAsync(blobName, JobType.Chunk);
 
                 if (blobSize <= CHUNK_THRESHOLD_BYTES)
                 {
-                    log.LogInformation($"Blob {blobName} (Size: {blobSize} bytes) is below threshold. Processing as a single file.");
+                    logger.LogInformation($"Blob {blobName} (Size: {blobSize} bytes) is below threshold. Processing as a single file.");
                     // Update status if it was just 'Accepted'
                     if (masterJobStatus.Status == ProcessingStatus.Accepted)
                     {
@@ -143,14 +147,14 @@ namespace TelecomCdr.AzureFunctions
                         await _jobStatusRepository.UpdateJobStatusAsync(masterJobStatus);
                     }
 
-                    _backgroundJobClient.Enqueue<Hangfire.Jobs.CdrFileProcessingJobs>(
-                        job => job.ProcessFileFromBlobAsync(blobName, containerName, correlationId)
+                    _backgroundJobClient.Enqueue<CdrFileProcessingJobs>(
+                        job => job.ProcessFileFromBlobAsync(containerName, blobName, correlationId)
                     );
-                    log.LogInformation($"Enqueued single Hangfire job for {blobName}, CorrelationId: {correlationId}.");
+                    logger.LogInformation($"Enqueued single Hangfire job for {blobName}, CorrelationId: {correlationId}.");
                 }
                 else
                 {
-                    log.LogInformation($"Blob {blobName} (Size: {blobSize} bytes) exceeds threshold. Starting chunking process.");
+                    logger.LogInformation($"Blob {blobName} (Size: {blobSize} bytes) exceeds threshold. Starting chunking process.");
 
                     // Update Master Job Status for Chunking
                     masterJobStatus.Type = JobType.Master;
@@ -161,98 +165,102 @@ namespace TelecomCdr.AzureFunctions
                     int totalChunksCreated = 0;
                     string headerLine = null;
 
-                    using (var sourceStream = await _blobStorageService.DownloadFileAsync(containerName, blobName))
-                    using (var reader = new StreamReader(sourceStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+                    if (!chunkJobAlreadyQueued)
                     {
-                        // Strategy: Read header once, prepend to each chunk.
-                        // Assumes CSV files where the first line is a header.
-                        // If not all files have headers, or if processor handles missing headers, adjust this.
-                        if (!reader.EndOfStream)
+                        using (var sourceStream = await _blobStorageService.DownloadFileAsync(containerName, blobName))
+                        using (var reader = new StreamReader(sourceStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
                         {
-                            headerLine = await reader.ReadLineAsync();
-                        }
-
-                        if (string.IsNullOrEmpty(headerLine))
-                        {
-                            log.LogWarning($"Blob {blobName} is empty or has no header line. Chunking might produce empty chunks or fail.");
-                            // Potentially mark master job as failed if header is mandatory
-                        }
-
-                        List<string> currentChunkLines = new List<string>();
-                        long currentChunkSize = 0;
-                        if (headerLine != null)
-                        {
-                            currentChunkSize += Encoding.UTF8.GetByteCount(headerLine + Environment.NewLine);
-                        }
-
-
-                        while (!reader.EndOfStream)
-                        {
-                            string line = await reader.ReadLineAsync();
-                            if (line == null) break; // End of stream
-
-                            currentChunkLines.Add(line);
-                            currentChunkSize += Encoding.UTF8.GetByteCount(line + Environment.NewLine);
-
-                            if (currentChunkSize >= TARGET_CHUNK_SIZE_BYTES || reader.EndOfStream)
+                            // Strategy: Read header once, prepend to each chunk.
+                            // Assumes CSV files where the first line is a header.
+                            // If not all files have headers, or if processor handles missing headers, adjust this.
+                            if (!reader.EndOfStream)
                             {
-                                totalChunksCreated++;
-                                string chunkBlobName = $"{Path.GetFileNameWithoutExtension(originalFileName)}_chunk_{totalChunksCreated}{Path.GetExtension(originalFileName)}";
-                                var chunkCorrelationId = Guid.NewGuid();
+                                headerLine = await reader.ReadLineAsync();
+                            }
 
-                                log.LogInformation($"Creating chunk {totalChunksCreated}: {chunkBlobName}, Size: {currentChunkSize} bytes");
+                            if (string.IsNullOrEmpty(headerLine))
+                            {
+                                logger.LogWarning($"Blob {blobName} is empty or has no header line. Chunking might produce empty chunks or fail.");
+                                // Potentially mark master job as failed if header is mandatory
+                            }
 
-                                // Construct chunk content (Header + Lines)
-                                StringBuilder chunkContentBuilder = new StringBuilder();
-                                if (headerLine != null)
-                                {
-                                    chunkContentBuilder.AppendLine(headerLine);
-                                }
-                                foreach (var chunkLine in currentChunkLines)
-                                {
-                                    chunkContentBuilder.AppendLine(chunkLine);
-                                }
-                                byte[] chunkBytes = Encoding.UTF8.GetBytes(chunkContentBuilder.ToString());
+                            List<string> currentChunkLines = new List<string>();
+                            long currentChunkSize = 0;
+                            if (headerLine != null)
+                            {
+                                currentChunkSize += Encoding.UTF8.GetByteCount(headerLine + Environment.NewLine);
+                            }
 
-                                using (var chunkStream = new MemoryStream(chunkBytes))
+                            while (!reader.EndOfStream)
+                            {
+                                string line = await reader.ReadLineAsync();
+                                if (line == null) break; // End of stream
+
+                                currentChunkLines.Add(line);
+                                currentChunkSize += Encoding.UTF8.GetByteCount(line + Environment.NewLine);
+
+                                if (currentChunkSize >= TARGET_CHUNK_SIZE_BYTES || reader.EndOfStream)
                                 {
-                                    var chunkMetadata = new Dictionary<string, string>
+                                    totalChunksCreated++;
+                                    string chunkBlobName = $"{Path.GetFileNameWithoutExtension(originalFileName)}_chunk_{totalChunksCreated}{Path.GetExtension(originalFileName)}";
+                                    var chunkCorrelationId = Guid.NewGuid();
+
+                                    logger.LogInformation($"Creating chunk {totalChunksCreated}: {chunkBlobName}, Size: {currentChunkSize} bytes");
+
+                                    // Construct chunk content (Header + Lines)
+                                    StringBuilder chunkContentBuilder = new StringBuilder();
+                                    if (headerLine != null)
                                     {
+                                        chunkContentBuilder.AppendLine(headerLine);
+                                    }
+                                    foreach (var chunkLine in currentChunkLines)
+                                    {
+                                        chunkContentBuilder.AppendLine(chunkLine);
+                                    }
+                                    byte[] chunkBytes = Encoding.UTF8.GetBytes(chunkContentBuilder.ToString());
+
+                                    using (var chunkStream = new MemoryStream(chunkBytes))
+                                    {
+                                        var chunkMetadata = new Dictionary<string, string>
+                                    {
+                                        { "UploadCorrelationId", chunkCorrelationId.ToString() },
                                         { "ParentCorrelationId", correlationId.ToString() },
                                         { "ChunkNumber", totalChunksCreated.ToString() },
                                         { "IsChunk", "true" },
                                         { "OriginalFileName", originalFileName } // Good to have for context
                                     };
-                                    await _blobStorageService.UploadFileAsync(containerName, chunkBlobName, chunkStream, chunkMetadata);
-                                }
+                                        await _blobStorageService.UploadFileAsync(containerName, chunkBlobName, chunkStream, chunkMetadata);
+                                    }
 
-                                // Create Chunk Job Status
-                                var chunkJobStatus = new JobStatus
-                                {
-                                    CorrelationId = chunkCorrelationId,
-                                    ParentCorrelationId = correlationId,
-                                    Type = JobType.Chunk,
-                                    Status = ProcessingStatus.QueuedForProcessing,
-                                    BlobName = chunkBlobName,
-                                    ContainerName = containerName,
-                                    OriginalFileName = originalFileName, // Store original file name for context
-                                    CreatedAtUtc = DateTime.UtcNow,
-                                    LastUpdatedAtUtc = DateTime.UtcNow
-                                };
-                                await _jobStatusRepository.CreateJobStatusAsync(chunkJobStatus);
+                                    // Create Chunk Job Status
+                                    var chunkJobStatus = new JobStatus
+                                    {
+                                        CorrelationId = chunkCorrelationId,
+                                        ParentCorrelationId = correlationId,
+                                        Type = JobType.Chunk,
+                                        Status = ProcessingStatus.QueuedForProcessing,
+                                        BlobName = chunkBlobName,
+                                        ContainerName = containerName,
+                                        OriginalFileName = originalFileName, // Store original file name for context
+                                        CreatedAtUtc = DateTime.UtcNow,
+                                        LastUpdatedAtUtc = DateTime.UtcNow
+                                    };
+                                    await _jobStatusRepository.CreateJobStatusAsync(chunkJobStatus);
 
-                                // Enqueue Hangfire Job for Chunk
-                                _backgroundJobClient.Enqueue<Hangfire.Jobs.CdrFileProcessingJobs>(
-                                    job => job.ProcessFileFromBlobAsync(chunkBlobName, containerName, chunkCorrelationId)
-                                );
-                                log.LogInformation($"Enqueued Hangfire job for chunk {chunkBlobName}, ChunkCorrelationId: {chunkCorrelationId}.");
 
-                                // Reset for next chunk
-                                currentChunkLines.Clear();
-                                currentChunkSize = 0;
-                                if (headerLine != null)
-                                {
-                                    currentChunkSize += Encoding.UTF8.GetByteCount(headerLine + Environment.NewLine);
+                                    // Enqueue Hangfire Job for Chunk
+                                    _backgroundJobClient.Enqueue<CdrFileProcessingJobs>(
+                                    job => job.ProcessFileFromBlobAsync(containerName, chunkBlobName, chunkCorrelationId)
+                                    );
+                                    logger.LogInformation($"Enqueued Hangfire job for chunk {chunkBlobName}, ChunkCorrelationId: {chunkCorrelationId}.");
+
+                                    // Reset for next chunk
+                                    currentChunkLines.Clear();
+                                    currentChunkSize = 0;
+                                    if (headerLine != null)
+                                    {
+                                        currentChunkSize += Encoding.UTF8.GetByteCount(headerLine + Environment.NewLine);
+                                    }
                                 }
                             }
                         }
@@ -267,7 +275,7 @@ namespace TelecomCdr.AzureFunctions
                     masterJobStatus.LastUpdatedAtUtc = DateTime.UtcNow;
                     await _jobStatusRepository.UpdateJobStatusAsync(masterJobStatus);
 
-                    log.LogInformation($"Finished chunking {blobName}. Total chunks created: {totalChunksCreated}. Master Job CorrelationId: {uploadCorrelationId}");
+                    logger.LogInformation($"Finished chunking {blobName}. Total chunks created: {totalChunksCreated}. Master Job CorrelationId: {uploadCorrelationId}");
 
                     // Optional: Delete original large blob after successful chunking
                     // Consider the implications: if chunk processing fails, original might be needed.
@@ -277,7 +285,7 @@ namespace TelecomCdr.AzureFunctions
             }
             catch (Exception ex)
             {
-                log.LogError(ex, $"Error processing blob {blobName} for CorrelationId {uploadCorrelationId}: {ex.Message}");
+                logger.LogError(ex, $"Error processing blob {blobName} for CorrelationId {uploadCorrelationId}: {ex.Message}");
                 // Attempt to update master job status to Failed
                 try
                 {
@@ -292,7 +300,7 @@ namespace TelecomCdr.AzureFunctions
                 }
                 catch (Exception updateEx)
                 {
-                    log.LogError(updateEx, $"Failed to update job status to Failed for {uploadCorrelationId}: {updateEx.Message}");
+                    logger.LogError(updateEx, $"Failed to update job status to Failed for {uploadCorrelationId}: {updateEx.Message}");
                 }
                 // Depending on the error, you might want to rethrow or handle specifically
                 // For an Azure Function, rethrowing might cause retries if configured.

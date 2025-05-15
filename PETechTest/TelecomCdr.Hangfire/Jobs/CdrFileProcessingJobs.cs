@@ -34,7 +34,7 @@ namespace TelecomCdr.Hangfire.Jobs
         /// If this is a chunk, this will be the chunk's unique CorrelationId.
         /// If this is a single file, this will be the original UploadCorrelationId.
         /// </param>
-        public async Task ProcessFileFromBlobAsync(string blobName, string containerName, Guid jobCorrelationId)
+        public async Task ProcessFileFromBlobAsync(string containerName, string blobName, Guid jobCorrelationId)
         {
             _logger.LogInformation("Hangfire job started: Processing blob '{BlobName}' from container '{ContainerName}' with Correlation ID '{CorrelationId}'.",
                 blobName, containerName, jobCorrelationId);
@@ -82,7 +82,7 @@ namespace TelecomCdr.Hangfire.Jobs
             try
             {
                 // The IFileProcessingService handles downloading from blob, parsing, and storing.
-                processingResult = await _fileProcessingService.ProcessAndStoreCdrFileFromBlobAsync(blobName, containerName, jobCorrelationId);
+                processingResult = await _fileProcessingService.ProcessAndStoreCdrFileFromBlobAsync(containerName, blobName, jobCorrelationId);
 
                 var successMessage = $"File processed. Successful records: {processingResult.ProcessedRecordsCount}, Failed records: {processingResult.FailedRecordsCount}.";
                 if (processingResult.ErrorMessages.Any())

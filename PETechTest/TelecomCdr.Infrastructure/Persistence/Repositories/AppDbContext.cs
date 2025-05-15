@@ -49,11 +49,17 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
                 entity.Property(e => e.CorrelationId).IsRequired().HasMaxLength(36);
                 entity.HasIndex(e => e.CorrelationId).IsUnique();
 
+                entity.Property(e => e.ParentCorrelationId);
+                entity.Property(e => e.Type).IsRequired();
                 entity.Property(e => e.Status).IsRequired().HasMaxLength(30);
                 entity.Property(e => e.Message).HasMaxLength(2000);
                 entity.Property(e => e.OriginalFileName).HasMaxLength(255);
                 entity.Property(e => e.BlobName).HasMaxLength(255);
                 entity.Property(e => e.ContainerName).HasMaxLength(200);
+                entity.Property(e => e.TotalChunks);
+                entity.Property(e => e.ProcessedChunks);
+                entity.Property(e => e.SuccessfulChunks);
+                entity.Property(e => e.FailedChunks);
                 entity.Property(e => e.ProcessedRecordsCount).IsRequired(false);
                 entity.Property(e => e.FailedRecordsCount).IsRequired(false);
                 entity.Property(e => e.CreatedAtUtc).IsRequired();

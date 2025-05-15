@@ -28,6 +28,7 @@ GO
 
 PRINT 'Database setup script completed.';
 
+use CdrStore;
 
 -- =====================================================================================
 -- call_detail_records Table for storing cdr records
@@ -155,8 +156,8 @@ BEGIN
 	CREATE TABLE [dbo].[job_statuses] (
     [CorrelationId]        UNIQUEIDENTIFIER NOT NULL,  -- Primary Key, typically a GUID string
     [ParentCorrelationId]  UNIQUEIDENTIFIER NULL,      -- Foreign key to another JobStatus (master job)
-    [JobTypeId]            INT NOT NULL,            -- Foreign Key to JobTypes.Id
-    [ProcessingStatusId]   INT NOT NULL,            -- Foreign Key to ProcessingStatuses.Id
+    [Type]            INT NOT NULL,            -- Foreign Key to JobTypes.Id
+    [ProcessingStatus]   INT NOT NULL,            -- Foreign Key to ProcessingStatuses.Id
     [OriginalFileName]     NVARCHAR(255) NULL,
     [BlobName]             NVARCHAR(255) NULL,
     [ContainerName]        NVARCHAR(100) NULL,
@@ -169,9 +170,7 @@ BEGIN
     [CreatedAtUtc]          DATETIME2 NOT NULL,
     [LastUpdatedAtUtc]      DATETIME2 NOT NULL,
     [Message]         		NVARCHAR(2000) NULL,
-    CONSTRAINT [PK_JobStatuses] PRIMARY KEY CLUSTERED ([CorrelationId] ASC),
-    CONSTRAINT [FK_JobStatuses_JobTypes] FOREIGN KEY ([JobTypeId]) REFERENCES [dbo].[JobTypes]([Id]),
-    CONSTRAINT [FK_JobStatuses_ProcessingStatuses] FOREIGN KEY ([ProcessingStatusId]) REFERENCES [dbo].[ProcessingStatuses]([Id])
+    CONSTRAINT [PK_JobStatuses] PRIMARY KEY CLUSTERED ([CorrelationId] ASC)
 	);
 
 -- These help speed up queries on these columns.
@@ -180,11 +179,11 @@ BEGIN
 	ON [dbo].[job_statuses]([ParentCorrelationId] ASC)
 	WHERE [ParentCorrelationId] IS NOT NULL; -- Index only non-null values if desired, or remove WHERE for all
 
-	CREATE NONCLUSTERED INDEX [IX_JobStatus_ProcessingStatusId] -- Renamed from IX_JobStatus_Status
-	ON [dbo].[job_statuses]([ProcessingStatusId] ASC);
+	CREATE NONCLUSTERED INDEX [IX_JobStatus_ProcessingStatus] -- Renamed from IX_JobStatus_Status
+	ON [dbo].[job_statuses]([ProcessingStatus] ASC);
 
-	CREATE NONCLUSTERED INDEX [IX_JobStatus_JobTypeId] -- Renamed from IX_JobStatus_Type
-	ON [dbo].[job_statuses]([JobTypeId] ASC);
+	CREATE NONCLUSTERED INDEX [IX_JobStatus_JobType] -- Renamed from IX_JobStatus_Type
+	ON [dbo].[job_statuses]([Type] ASC);
 
 	CREATE NONCLUSTERED INDEX [IX_JobStatus_CreatedAt]
 	ON [dbo].[job_statuses]([CreatedAtUtc] ASC);

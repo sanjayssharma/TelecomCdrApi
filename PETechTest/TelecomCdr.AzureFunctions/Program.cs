@@ -3,6 +3,13 @@ using Microsoft.Extensions.Hosting;
 using Hangfire;
 using Hangfire.SqlServer;
 using Microsoft.Extensions.Logging;
+using TelecomCdr.Abstraction.Interfaces.Service;
+using TelecomCdr.Infrastructure.Services;
+using Microsoft.Extensions.Configuration;
+using Azure.Storage.Blobs;
+using TelecomCdr.Abstraction.Interfaces.Repository;
+using TelecomCdr.Infrastructure.Persistence.Repositories;
+using Microsoft.EntityFrameworkCore;
 
 public class Program
 {
@@ -10,13 +17,19 @@ public class Program
     {
         var host = new HostBuilder()
             .ConfigureFunctionsWebApplication()
+            //.ConfigureAppConfiguration(configBuilder => // Optional: Add if you need appsettings.json in Functions
+            //{
+            //    configBuilder.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+            //                 .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_ENVIRONMENT") ?? "Development"}.json", optional: true, reloadOnChange: true)
+            //                 .AddEnvironmentVariables();
+            //})
             .ConfigureServices((hostContext, services) =>
             {
                 var configuration = hostContext.Configuration;
 
                 // Retrieve Hangfire connection string from environment variables
                 // (set in local.settings.json for local dev, App Settings in Azure Portal)
-                string hangfireConnectionString = Environment.GetEnvironmentVariable("HANGFIRE_SQL_CONNECTION_STRING");
+                string hangfireConnectionString = configuration.GetConnectionString("HangfireConnectionString");
 
                 if (string.IsNullOrEmpty(hangfireConnectionString))
                 {
@@ -48,10 +61,40 @@ public class Program
                     .UseSqlServerStorage(hangfireConnectionString, new SqlServerStorageOptions
                     {}));
 
+                // 1. Register DbContext (Example for MsSqlJobStatusRepository)
+                string sqlConnectionString = configuration.GetConnectionString("CdrConnectionString");
+                services.AddDbContext<AppDbContext>(options =>
+                    options.UseSqlServer(sqlConnectionString));
+
+                // 2. Register your repositories and services
+                services.AddScoped<IJobStatusRepository, SqlJobStatusRepository>();
+                services.AddScoped<ICdrRepository, SqlCdrRepository>();
+                services.AddScoped<IFailedCdrRecordRepository, SqlFailedCdrRecordRepository>();
+
+                // *** REGISTER IBlobStorageService ***
+                // The AzureBlobStorageService itself might need IConfiguration (already available via hostContext)
+                // and ILogger (which is available by default for injection into services).
+                // Ensure your Cdr.AzureFunctions project references Cdr.Infrastructure and Cdr.Application.
+                string azureWebJobsStorage = configuration["AZURE_STORAGE_CONNECTION_STRING"];
+                services.AddSingleton(x => new BlobServiceClient(azureWebJobsStorage));
+                services.AddScoped<IBlobStorageService, AzureBlobStorageService>();
+                services.AddScoped<IFileProcessingService, CsvFileProcessingService>();
+                // Or services.AddScoped if its dependencies are scoped and it's appropriate.
+                // Singleton is often fine for client services like this if they are thread-safe.
+
+                // Configure logging
                 services.AddLogging(loggingBuilder =>
                 {
                     loggingBuilder.AddConsole();
-                    // Add other logging providers like Application Insights
+                    // Add Application Insights for Azure Functions if not automatically configured
+                    // string appInsightsKey = configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"];
+                    // if (!string.IsNullOrEmpty(appInsightsKey))
+                    // {
+                    //     loggingBuilder.AddApplicationInsights(
+                    //         configureTelemetryConfiguration: (config) => config.ConnectionString = appInsightsKey,
+                    //         configureApplicationInsightsLoggerOptions: (options) => { }
+                    //     );
+                    // }
                 });
 
             })

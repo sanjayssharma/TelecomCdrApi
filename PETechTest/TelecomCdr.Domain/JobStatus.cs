@@ -30,6 +30,7 @@ namespace TelecomCdr.Domain
         public Guid CorrelationId { get; set; } // Unique ID for this job/chunk status
 
         [Required]
+        [Column("ProcessingStatus")]
         public ProcessingStatus Status { get; set; }
 
         [Required]

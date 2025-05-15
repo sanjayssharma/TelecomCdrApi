@@ -61,6 +61,22 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
             }
         }
 
+        public async Task<bool> CheckJobByBlobNameExistsAsync(string blobName, JobType jobType, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrEmpty(blobName))
+                throw new ArgumentException("blobName cannot be null or empty.", nameof(blobName));
+
+            try
+            {
+                return await _context.JobStatuses.AnyAsync(js => js.BlobName == blobName && js.Type == jobType, cancellationToken: cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, $"Error retrieving JobStatus for CorrelationId: {blobName}");
+                throw; // Re-throw to allow higher-level handling
+            }
+        }
+
         public async Task UpdateJobStatusAsync(JobStatus jobStatus)
         {
             if (jobStatus == null) throw new ArgumentNullException(nameof(jobStatus));

@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TelecomCdr.Core\TelecomCdr.Core.csproj" />
+    <ProjectReference Include="..\TelecomCdr.Hangfire\TelecomCdr.Hangfire.csproj" />
     <ProjectReference Include="..\TelecomCdr.Infrastructure\TelecomCdr.Infrastructure.csproj" />
   </ItemGroup>
 

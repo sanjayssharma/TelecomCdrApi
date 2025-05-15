@@ -8,6 +8,7 @@ namespace TelecomCdr.Abstraction.Interfaces.Repository
         Task<JobStatus?> GetJobStatusByCorrelationIdAsync(Guid correlationId);
         Task UpdateJobStatusAsync(JobStatus jobStatus);
         Task UpdateJobStatusAsync(Guid correlationId, ProcessingStatus status, string? message = null, int? processedRecords = null, int? failedRecords = null);
+        Task<bool> CheckJobByBlobNameExistsAsync(string blobName, JobType jobType, CancellationToken cancellationToken = default);
 
         // Chunk management
         // This method now needs to handle aggregation for master job

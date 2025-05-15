@@ -10,14 +10,21 @@ WORKDIR /source
 COPY PETechTest.sln .
 
 # Copy project files. Paths are relative to the build context (PETechTest folder).
-# Copy the Cdr.Api project file and its directory structure.
+# Copy the TelecomCdr.Api project file and its directory structure.
 COPY TelecomCdr.API/TelecomCdr.API.csproj ./TelecomCdr.API/
+
 # Copy dependent project files.
 COPY TelecomCdr.Core/TelecomCdr.Core.csproj ./TelecomCdr.Core/
-COPY TelecomCdr.Data/TelecomCdr.Data.csproj ./TelecomCdr.Data/
+COPY TelecomCdr.Abstraction/TelecomCdr.Abstraction.csproj ./TelecomCdr.Abstraction/
+COPY TelecomCdr.Domain/TelecomCdr.Domain.csproj ./TelecomCdr.Domain/
+COPY TelecomCdr.Infrastructure/TelecomCdr.Infrastructure.csproj ./TelecomCdr.Infrastructure/
 COPY TelecomCdr.Hangfire/TelecomCdr.Hangfire.csproj ./TelecomCdr.Hangfire/
-COPY TelecomCdr.HangfireJobs/TelecomCdr.HangfireJobs.csproj ./TelecomCdr.HangfireJobs/
+COPY TelecomCdr.AzureFunctions/TelecomCdr.AzureFunctions.csproj ./TelecomCdr.AzureFunctions/
+
 # Add COPY commands for any other referenced projects (e.g., test projects if needed for build steps, though unlikely).
+COPY TelecomCdr.API.UnitTests/TelecomCdr.API.UnitTests.csproj ./TelecomCdr.API.UnitTests/
+COPY TelecomCdr.Core.UnitTests/TelecomCdr.Core.UnitTests.csproj ./TelecomCdr.Core.UnitTests/
+COPY TelecomCdr.Infrastructure.UnitTests/TelecomCdr.Infrastructure.UnitTests.csproj ./TelecomCdr.Infrastructure.UnitTests/
 
 # Restore NuGet packages for the entire solution.
 RUN dotnet restore "PETechTest.sln"
@@ -41,11 +48,11 @@ COPY --from=build /app/publish .
 
 # Expose the ports the application listens on (match ASPNETCORE_URLS in docker-compose.yml).
 EXPOSE 8080
-EXPOSE 8081 # If using HTTPS
+EXPOSE 8081
 
 # Set the entry point for the container to run the application DLL.
 # The DLL name typically matches the project/assembly name.
-ENTRYPOINT ["dotnet", "Cdr.Api.dll"]
+ENTRYPOINT ["dotnet", "TelecomCdr.API.dll"]
 
 # Optional: Add health check instructions
 # HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD curl --fail http://localhost:8080/healthz || exit 1
