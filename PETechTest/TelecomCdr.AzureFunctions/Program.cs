@@ -18,12 +18,12 @@ public class Program
     {
         var host = new HostBuilder()
             .ConfigureFunctionsWebApplication()
-            //.ConfigureAppConfiguration(configBuilder => // Optional: Add if you need appsettings.json in Functions
-            //{
-            //    configBuilder.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
-            //                 .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_ENVIRONMENT") ?? "Development"}.json", optional: true, reloadOnChange: true)
-            //                 .AddEnvironmentVariables();
-            //})
+            .ConfigureAppConfiguration(configBuilder => // Optional: Add if you need appsettings.json in Functions
+            {
+                configBuilder.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+                             .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_ENVIRONMENT") ?? "Development"}.json", optional: true, reloadOnChange: true)
+                             .AddEnvironmentVariables();
+            })
             .ConfigureServices((hostContext, services) =>
             {
                 var configuration = hostContext.Configuration;

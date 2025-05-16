@@ -36,6 +36,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelecomCdr.Hangfire.UniTest
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelecomCdr.AzureFunctions.Tests", "TelecomCdr.AzureFunctions.Tests\TelecomCdr.AzureFunctions.Tests.csproj", "{DFA5DEE4-2395-4E46-AAD1-ADDAD12163C6}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "AlternateSolution", "AlternateSolution", "{819D7458-E297-4791-9A61-5C2D0B195505}"
+	ProjectSection(SolutionItems) = preProject
+		DurableFunction-Approach.md = DurableFunction-Approach.md
+		Leveraging-AzureServices.md = Leveraging-AzureServices.md
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelecomCdr.DurableFunctions", "TelecomCdr.DurableFunctions\TelecomCdr.DurableFunctions.csproj", "{D0C12961-40BB-4DB6-8B29-E9AD46FFA0DD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -90,6 +98,10 @@ Global
 		{DFA5DEE4-2395-4E46-AAD1-ADDAD12163C6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DFA5DEE4-2395-4E46-AAD1-ADDAD12163C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{DFA5DEE4-2395-4E46-AAD1-ADDAD12163C6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D0C12961-40BB-4DB6-8B29-E9AD46FFA0DD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D0C12961-40BB-4DB6-8B29-E9AD46FFA0DD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D0C12961-40BB-4DB6-8B29-E9AD46FFA0DD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D0C12961-40BB-4DB6-8B29-E9AD46FFA0DD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

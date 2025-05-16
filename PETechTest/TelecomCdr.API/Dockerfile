@@ -20,11 +20,14 @@ COPY TelecomCdr.Domain/TelecomCdr.Domain.csproj ./TelecomCdr.Domain/
 COPY TelecomCdr.Infrastructure/TelecomCdr.Infrastructure.csproj ./TelecomCdr.Infrastructure/
 COPY TelecomCdr.Hangfire/TelecomCdr.Hangfire.csproj ./TelecomCdr.Hangfire/
 COPY TelecomCdr.AzureFunctions/TelecomCdr.AzureFunctions.csproj ./TelecomCdr.AzureFunctions/
+COPY TelecomCdr.DurableFunctions/TelecomCdr.DurableFunctions.csproj ./TelecomCdr.DurableFunctions/
 
 # Add COPY commands for any other referenced projects (e.g., test projects if needed for build steps, though unlikely).
 COPY TelecomCdr.API.UnitTests/TelecomCdr.API.UnitTests.csproj ./TelecomCdr.API.UnitTests/
 COPY TelecomCdr.Core.UnitTests/TelecomCdr.Core.UnitTests.csproj ./TelecomCdr.Core.UnitTests/
 COPY TelecomCdr.Infrastructure.UnitTests/TelecomCdr.Infrastructure.UnitTests.csproj ./TelecomCdr.Infrastructure.UnitTests/
+COPY TelecomCdr.AzureFunctions.Tests/TelecomCdr.AzureFunctions.Tests.csproj ./TelecomCdr.AzureFunctions.Tests/
+COPY TelecomCdr.Hangfire.UniTests/TelecomCdr.Hangfire.UniTests.csproj ./TelecomCdr.Hangfire.UniTests/
 
 # Restore NuGet packages for the entire solution.
 RUN dotnet restore "PETechTest.sln"
