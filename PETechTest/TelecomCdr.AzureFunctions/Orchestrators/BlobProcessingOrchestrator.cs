@@ -223,7 +223,7 @@ namespace TelecomCdr.AzureFunctions.Orchestrators
                             chunkStream,
                             metadata: new Dictionary<string, string> {
                                 { "ParentCorrelationId", masterCorrelationId.ToString() },
-                                { "ChunkCorrelationId", chunkCorrelationId.ToString() },
+                                { "UploadCorrelationId", chunkCorrelationId.ToString() },
                                 { "ChunkNumber", chunkNumber.ToString() },
                                 { "IsChunk", "true" }
                             });
