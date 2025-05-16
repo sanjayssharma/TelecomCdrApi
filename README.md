@@ -1,4 +1,4 @@
-# Telecoms Call Detail Record (CDR) HTTP API
+# CDR (Call Detail Record) HTTP API
 
 ## Table of Contents
 
@@ -8,15 +8,14 @@
 4.  [Design Patterns and Principles](#design-patterns-and-principles)
 5.  [API Endpoints](#api-endpoints)
 6.  [Data Handling and Storage](#data-handling-and-storage)
-    * [CSV Parsing](#csv-parsing)
-    * [Data Validation](#data-validation)
+    * [CSV Parsing, Validation, and Error Handling](#csv-parsing-validation-and-error-handling)
     * [Database Schema](#database-schema)
-    * [Large File Ingestion (Blob Storage & Azure Function Triggered Hangfire Jobs)](#large-file-ingestion-blob-storage--azure-function-triggered-hangfire-jobs)
+    * [Large File Ingestion (Blob Storage, Chunking, & Azure Function Triggered Hangfire Jobs)](#large-file-ingestion-blob-storage-chunking--azure-function-triggered-hangfire-jobs)
 7.  [Background Processing (Hangfire & Azure Functions)](#background-processing-hangfire--azure-functions)
-8.  [Asynchronous Job Status Tracking](#asynchronous-job-status-tracking)
+8.  [Asynchronous Job Status Tracking (Queue-Based)](#asynchronous-job-status-tracking-queue-based)
 9.  [Non-Functional Requirements (NFRs)](#non-functional-requirements-nfrs)
     * [Authentication & Authorization](#authentication--authorization)
-    * [Performance](#performance)
+    * [Performance & Scalability](#performance--scalability)
     * [Logging and Correlation](#logging-and-correlation)
     * [Idempotency](#idempotency)
     * [Pagination](#pagination)
@@ -28,196 +27,197 @@
 
 ## 1. Introduction
 
-This document outlines the solution for a Telecoms Call Detail Record (CDR) HTTP API. The API allows for the ingestion of CDR data from CSV files. Smaller files can be processed immediately. Very large files are uploaded to Azure Blob Storage, and their processing is initiated by an Azure Function that enqueues a job in Hangfire. The API also provides endpoints to query CDR data (with pagination) and the status of asynchronous processing jobs.
+This document outlines the solution for a Telecoms Call Detail Record (CDR) HTTP API. The API allows for the ingestion of CDR data from CSV files. Smaller files can be processed immediately. Very large files (e.g., up to 10GB) are uploaded to Azure Blob Storage. An Azure Function then processes these blobs, potentially splitting very large ones into manageable chunks, and enqueues jobs in Hangfire for each file or chunk. Processed records are stored in a primary database, while records that fail parsing or validation are logged to a separate table for review.
 
-The solution emphasizes best practices in software development, including SOLID principles, design patterns (CQRS, Repository), comprehensive unit testing, and robust asynchronous processing.
+The API provides endpoints to query CDR data (with pagination) and the status of asynchronous processing jobs. Job status updates are handled asynchronously via Azure Storage Queues to ensure resilience and decoupling. The solution emphasizes best practices in software development, including SOLID principles, clean architecture, design patterns (CQRS, Repository, Null Object), stream processing for large data, comprehensive unit testing, and robust error handling.
 
 ## 2. Project Structure
 
-The solution is organized into the following projects, following a clean architecture approach:
+The solution (`PETechTest.sln`) is organized into the following projects:
 
-* **`TelecomCdr.Api`**: ASP.NET Core Web API project. Hosts API endpoints (including job status, supporting pagination), Hangfire Server, and Hangfire Dashboard. Handles request validation and initial job status creation. Contains API contracts like `PaginationQuery`.
+* **`TelecomCdr.API`**: ASP.NET Core Web API project. Hosts API endpoints (including job status, supporting pagination), Hangfire Server, and Hangfire Dashboard. Handles request validation, initial job status creation, and idempotency checks.
+* **`TelecomCdr.Core`**: Contains application logic, CQRS command and query handlers (using MediatR), business rules, and interfaces for infrastructure services (e.g., `ICdrRepository`, `IFileProcessingService`, `IBlobStorageService`, `IJobStatusRepository`, `IFailedCdrRecordRepository`, `IIdempotencyService`, `IQueueService`). Defines DTOs/Models like `PagedResponse<T>` and `JobStatusUpdateMessage`.
+* **`TelecomCdr.Abstraction`**: Contains interfaces for better decoupling between projects.
+* **`TelecomCdr.Domain`**: Contains core domain entities (e.g., `CallDetailRecord`, `JobStatus` with `ProcessingStatus` and `JobType` enums, `FailedCdrRecord`, `FileProcessingResult`) and domain-specific logic.
+* **`TelecomCdr.Infrastructure`**: Implements infrastructure concerns such as data persistence (repositories for MSSQL supporting pagination for CDRs, Job Statuses, and Failed Records), file processing (`CsvFileProcessingService` with streaming and error handling), Azure Blob Storage interaction (`AzureBlobStorageService`), Redis client for idempotency (`RedisIdempotencyService`), and Azure Storage Queue interaction (`AzureStorageQueueService`).
+* **`TelecomCdr.Hangfire`**: A class library defining the job methods that Hangfire will execute (e.g., `CdrFileProcessingJobs`). These methods invoke services from the Application/Infrastructure layers and send status update messages to an Azure Storage Queue.
+* **`TelecomCdr.AzureFunctions`**: An Azure Functions (.NET Isolated Worker) project.
+    * `EnqueueCdrProcessingJob`: Blob-triggered function that detects new files, implements logic for chunking very large files, creates initial job/chunk statuses, and enqueues processing jobs in Hangfire.
+    * `UpdateJobStatusFromQueue`: Queue-triggered function that processes `JobStatusUpdateMessage`s from a queue to update the `JobStatuses` table asynchronously, including aggregating chunk statuses for master jobs.
+* **Test Projects**: `TelecomCdr.API.UnitTests`, `TelecomCdr.Core.UnitTests`, `TelecomCdr.Infrastructure.UnitTests`, `TelecomCdr.Hangfire.UniTests`, `TelecomCdr.AzureFunctions.Tests`.
 
+/PETechTest (Solution Root, contains PETechTest.sln, docker-compose.yml)|-- /TelecomCdr.Api                 # ASP.NET Core Web API|-- /TelecomCdr.Core         # Application Logic, Interfaces, Models|-- /TelecomCdr.Domain              # Domain Entities & Enums|-- /TelecomCdr.Infrastructure      # Data Persistence, Services Implementations|-- /TelecomCdr.Hangfire        # Hangfire Job Definitions|-- /TelecomCdr.AzureFunctions      # Azure Functions (Blob Trigger, Queue Trigger)|-- /tests|   |-- ...|-- /mssql|   |-- setup.sql            # DB creation scripts (CdrStore, HangfireDb, tables)|-- README.md|-- appsettings.json         # For TelecomCdr.Api|-- local.settings.json      # For TelecomCdr.AzureFunctions
 ## 3. Technology Choices
 
 * **.NET 8**: Latest Long-Term Support (LTS) version of .NET.
 * **ASP.NET Core**: For building the HTTP API.
-* **Entity Framework Core (EF Core)**: As the Object-Relational Mapper (ORM) for MSSQL.
+* **Entity Framework Core (EF Core)**: ORM for MSSQL.
 * **MediatR**: For implementing the CQRS pattern.
-* **CsvHelper**: For reading and writing CSV files.
+* **FluentValidation**: For request validation (validators registered via DI, triggered manually e.g., in MediatR pipeline).
+* **CsvHelper**: For reading and writing CSV files (stream-based processing).
 * **Hangfire**: For background job processing, using SQL Server for storage.
 * **Azure Blob Storage SDK (`Azure.Storage.Blobs`)**: For storing large CSV files.
-* **Azure Functions**: For blob-triggered automation to enqueue Hangfire jobs.
-* **StackExchange.Redis**: For implementing distributed caching for idempotency.
-* **Serilog**: For structured logging.
-* **FluentValidation**: For request validation.
-* **NUnit**: As the primary testing framework for unit tests.
-* **Moq**: As the mocking library for unit tests.
+* **Azure Storage Queues SDK (`Azure.Storage.Queues`)**: For asynchronous job status updates.
+* **Azure Functions (.NET Isolated Worker)**: For blob-triggered automation and queue processing.
+* **StackExchange.Redis**: For distributed caching for idempotency.
+* **Serilog**: For structured logging, with sinks for Console, File, and Application Insights.
+* **NUnit & Moq**: For unit testing.
 * **Docker & Docker Compose**: For containerizing the API, MSSQL, and Redis for local development.
-* **Microsoft SQL Server (MSSQL)**: As the primary data store for CDRs and Job Statuses.
+* **Microsoft SQL Server (MSSQL)**: Primary data store for CDRs, Job Statuses, Failed Records, and Hangfire data.
 
 ## 4. Design Patterns and Principles
 
-* **SOLID Principles**: Applied throughout the solution.
-* **DRY (Don't Repeat Yourself)**: Minimized code duplication.
-* **CQRS (Command Query Responsibility Segregation)**: Implemented using MediatR.
-* **Mediator Pattern**: Facilitated by MediatR.
-* **Repository Pattern**: `ICdrRepository`, `IJobStatusRepository` abstract data access.
-* **Strategy Pattern (Conceptual)**: `IBlobStorageService`, `IFileProcessingService`, `IIdempotencyService` interfaces allow for different implementations.
-* **Action Filters**: Used for implementing idempotency checks (`IdempotencyAttribute`).
-* **Event-Driven Architecture**: Azure Function triggered by blob creation.
-* **Pagination**: Implemented for list-based query endpoints.
+* **SOLID Principles, DRY, Clean Architecture**.
+* **CQRS & Mediator Pattern** (MediatR).
+* **Repository Pattern** (`ICdrRepository`, `IJobStatusRepository`, `IFailedCdrRecordRepository`).
+* **Strategy Pattern** for service interfaces.
+* **Null Object Pattern** (e.g., `NullIdempotencyService`).
+* **Action Filters** (`IdempotencyAttribute`).
+* **Event-Driven Architecture**: Azure Function triggered by blob creation; job status updates via message queues.
+* **Stream Processing**: For handling large CSV files efficiently.
+* **File Chunking (Conceptually for very large files)**: Logic in Azure Function to split large blobs and enqueue parallel jobs.
 
 ## 5. API Endpoints
 
-The API exposes the following endpoints:
-
-* **`POST /api/cdr/upload`**:
-    * Description: Uploads a CDR CSV file for immediate processing. Suitable for smaller files.
-    * Request: `multipart/form-data` with a CSV file.
-    * Response: `202 Accepted` with a correlation ID.
-* **`POST /api/cdr/upload-large`**:
-    * Description: Uploads a CDR CSV file to Azure Blob Storage. Creates an initial job status record. Processing is triggered asynchronously via Azure Function and Hangfire.
-    * Request: `multipart/form-data` with a CSV file. `X-Correlation-ID` header recommended.
-    * Response: `202 Accepted` with the `CorrelationId` and `BlobName`.
-* **`GET /api/jobstatus/{correlationId}`**:
-    * Description: Retrieves the current status of an asynchronous file processing job.
-    * Response: `200 OK` with job status details or `404 Not Found`.
-* **`GET /api/cdr/reference/{reference}`**:
-    * Description: Retrieves a specific Call Detail Record by its unique `reference`.
-    * Response: `200 OK` with the CDR data or `404 Not Found`.
-* **`GET /api/cdr/caller/{callerId}`**:
-    * Description: Retrieves Call Detail Records for a given `caller_id` with pagination.
-    * Query Parameters: `pageNumber` (int, default 1), `pageSize` (int, default 10, max 100).
-    * Response: `200 OK` with a `PagedResponse<CallDetailRecord>` containing the list of CDRs for the page and pagination metadata.
-* **`GET /api/cdr/recipient/{recipientId}`**:
-    * Description: Retrieves Call Detail Records for a given `recipient` with pagination.
-    * Query Parameters: `pageNumber` (int, default 1), `pageSize` (int, default 10, max 100).
-    * Response: `200 OK` with a `PagedResponse<CallDetailRecord>`.
-* **`GET /api/cdr/correlation/{correlationId}`**:
-    * Description: Retrieves Call Detail Records associated with a specific `UploadCorrelationId` with pagination.
-    * Query Parameters: `pageNumber` (int, default 1), `pageSize` (int, default 10, max 100).
-    * Response: `200 OK` with a `PagedResponse<CallDetailRecord>`.
-* **`GET /hangfire`**: (If configured and enabled)
-    * Description: Accesses the Hangfire dashboard. Requires appropriate authorization.
+* **`POST /api/cdr/upload`**: For immediate processing of smaller CSV files.
+* **`POST /api/cdr/upload-large`**: Uploads file to Azure Blob Storage, creates initial `JobStatus` (type `Master` or `SingleFile`). Asynchronous processing via Azure Function & Hangfire. Returns `CorrelationId`.
+* **`GET /api/jobstatus/{correlationId}`**: Retrieves status of an asynchronous job (master, chunk, or single file).
+* **`GET /api/cdr/reference/{reference}`**: Retrieves a specific CDR.
+* **`GET /api/cdr/caller/{callerId}`**: Paginated list of CDRs by `caller_id`. (Params: `pageNumber`, `pageSize`)
+* **`GET /api/cdr/recipient/{recipientId}`**: Paginated list of CDRs by `recipient`. (Params: `pageNumber`, `pageSize`)
+* **`GET /api/cdr/correlation/{correlationId}`**: Paginated list of CDRs by `UploadCorrelationId`. (Params: `pageNumber`, `pageSize`)
+* **`GET /hangfire`**: Hangfire dashboard (requires securing in production).
 
 ## 6. Data Handling and Storage
 
-### CSV Parsing
-`CsvHelper` parses uploaded CSV files.
-
-### Data Validation
-Basic validation via FluentValidation and during parsing.
+### CSV Parsing, Validation, and Error Handling
+* **Date Format**: Assumes "dd/MM/yyyy" for dates and "HH:mm:ss" for times in CSV.
+* **Streaming**: `CsvFileProcessingService` reads CSVs row-by-row from streams to handle large files with low memory.
+* **Row-Level Error Handling**:
+    * Each row is parsed and validated within a `try-catch`.
+    * Failed rows (due to format, missing data, etc.) are not processed into `CallDetailRecords`.
+    * Instead, a `FailedCdrRecord` is created storing the `UploadCorrelationId`, raw row data, error message, and row number.
+    * These failed records are batched and saved to the `FailedCdrRecords` table.
+* **Batching**: Both successful CDRs and failed records are inserted into the database in batches (e.g., 1000 records) for performance.
 
 ### Database Schema
-* **`CallDetailRecords` table**: (See previous definition)
-* **`JobStatuses` table**: (See previous definition)
+* **`CallDetailRecords` table**: `Id` (PK), `CallerId`, `Recipient`, `CallEndDateTime`, `Duration`, `Cost`, `Reference` (unique), `Currency`, `UploadCorrelationId` (FK to master JobStatus `CorrelationId`).
+* **`JobStatuses` table**:
+    * `CorrelationId` (PK, unique ID for this job status entry).
+    * `Status` (enum: `Accepted`, `Chunking`, `ChunksQueued`, `Processing`, `Succeeded`, `PartiallySucceeded`, `Failed`).
+    * `Type` (enum: `Master`, `Chunk`, `SingleFile`).
+    * `ParentCorrelationId` (FK to master `JobStatus.CorrelationId` if this is a chunk).
+    * `Message`, `OriginalFileName`, `BlobName`, `ContainerName`.
+    * `TotalChunks`, `ProcessedChunks`, `SuccessfulChunks`, `FailedChunks` (for master jobs).
+    * `ProcessedRecordsCount`, `FailedRecordsCount` (for single files or individual chunks; master job aggregates these).
+    * `CreatedAtUtc`, `LastUpdatedAtUtc`.
+* **`FailedCdrRecords` table**: `Id` (PK, auto-increment), `UploadCorrelationId` (FK to master JobStatus `CorrelationId`), `RowNumberInCsv`, `RawRowData`, `ErrorMessage`, `FailedAtUtc`.
+* **Hangfire Tables**: Created by Hangfire in `HangfireDb`.
 
-### Large File Ingestion (Blob Storage & Azure Function Triggered Hangfire Jobs)
-1.  The `POST /api/cdr/upload-large` endpoint in `TelecomCdr.Api` receives the large CSV file.
-2.  The API generates/retrieves an `UploadCorrelationId`.
-3.  It creates an initial record in the `JobStatuses` database table with this `UploadCorrelationId` and a status like "Accepted" (via `IJobStatusRepository`).
-4.  The API uploads the file to Azure Blob Storage (via `IBlobStorageService`), adding `UploadCorrelationId` to the blob's metadata.
-5.  An Azure Function (`Cdr.AzureFunctions.EnqueueCdrProcessingJob`) is configured with a Blob Trigger, monitoring the `cdr-uploads` container.
-6.  Upon detection of a new blob, the Azure Function is invoked. It reads the blob's name and its `UploadCorrelationId` metadata.
-7.  The Azure Function then uses Hangfire's `BackgroundJobClient` to enqueue a new job. This job will call `Cdr.HangfireJobs.CdrFileProcessingJobs.ProcessFileFromBlobAsync`.
-8.  The enqueued job details (including blob name, container name, and `UploadCorrelationId`) are stored by Hangfire in its configured MSSQL database.
+### Large File Ingestion (Blob Storage, Chunking, & Azure Function Triggered Hangfire Jobs)
+1.  `POST /api/cdr/upload-large` receives file, generates a master `CorrelationId`.
+2.  API creates an initial `JobStatus` record (type `Master` or `SingleFile`, status `Accepted`).
+3.  File uploaded to Azure Blob Storage with `UploadCorrelationId` in metadata.
+4.  **`TelecomCdr.AzureFunctions.EnqueueCdrProcessingJob` (Blob Triggered):**
+    * Retrieves the blob and its metadata (`UploadCorrelationId` which is the master job's ID).
+    * **File Size Check & Chunking Logic:**
+        * If file is below a threshold (e.g., 500MB), it's treated as a `SingleFile` if not already marked. A single Hangfire job is enqueued for this blob, using its master `CorrelationId`.
+        * If file is very large:
+            * Updates master `JobStatus` to `ProcessingStatus.Chunking`.
+            * Splits the large blob into smaller, CSV-aware chunks (e.g., 100-250MB each, ensuring splits occur on line breaks and headers are handled).
+            * For each chunk:
+                * Uploads chunk to blob storage (e.g., `{originalName}_chunk_{N}.csv`).
+                * Creates a new `JobStatus` record for the chunk (type `Chunk`, `ParentCorrelationId` = master job's ID, status `QueuedForProcessing`, unique `CorrelationId` for this chunk).
+                * Enqueues a Hangfire job (`CdrFileProcessingJobs.ProcessFileFromBlobAsync`) for this specific chunk, passing the chunk's `CorrelationId`.
+            * Updates master `JobStatus` to `ProcessingStatus.ChunksQueued` with `TotalChunks` count.
+5.  Hangfire jobs process individual files or chunks.
 
 ## 7. Background Processing (Hangfire & Azure Functions)
-* **Azure Functions (`Cdr.AzureFunctions`)**:
-    * **Blob Trigger**: Listens for new files in the Azure Blob Storage container.
-    * **Job Enqueuing**: Responsible for creating and enqueuing Hangfire jobs. It needs Hangfire client libraries and configuration to connect to the Hangfire SQL database.
-* **Hangfire Job Definitions (`Cdr.HangfireJobs`)**:
-    * `CdrFileProcessingJobs.ProcessFileFromBlobAsync`: This method is executed by Hangfire.
-    * It updates the `JobStatus` record (via `IJobStatusRepository`) to "Processing", then "Succeeded" or "Failed".
-    * It invokes `IFileProcessingService` (implemented in `Cdr.Infrastructure`) to download the blob, parse CSVs, and store data.
-* **Hangfire Server**:
-    * Hosted within the `TelecomCdr.Api` application.
-    * Polls the Hangfire database for pending jobs and executes them using available worker threads.
-* **`IFileProcessingService`**: (Implemented in `Cdr.Infrastructure`)
-    * `ProcessAndStoreCdrFileFromBlobAsync`: Contains the logic to download a blob, parse its CSV content, map it to domain entities, and save it to the database.
-    * Designed for efficiency: stream blob downloads, use `CsvHelper` for parsing, and perform batch database inserts.
 
-## 8. Asynchronous Job Status Tracking
-* **`JobStatus` Entity**: A domain entity (`Cdr.Domain.JobStatus`) with `ProcessingStatus` enum, representing the state of a file processing job.
-* **`IJobStatusRepository`**: An interface (`Cdr.Application.Interfaces.IJobStatusRepository`) for creating and updating job status records. Implemented in `Cdr.Infrastructure.Persistence.Repositories.MssqlJobStatusRepository`.
-* **Status Flow**:
-    1.  **`TelecomCdr.Api` (`/upload-large`)**: Creates `JobStatus` with `Status = ProcessingStatus.Accepted`.
-    2.  **`Cdr.HangfireJobs` (`CdrFileProcessingJobs`)**:
-        * On job start: Updates `JobStatus` to `Status = ProcessingStatus.Processing`.
-        * On success: Updates `JobStatus` to `Status = ProcessingStatus.Succeeded`.
-        * On failure: Updates `JobStatus` to `Status = ProcessingStatus.Failed`, populating `Message` with error details.
-* **Status Query API**: `GET /api/jobstatus/{correlationId}` in `TelecomCdr.Api` allows clients to poll for the job's status.
+* **`CsvFileProcessingService`**: Core logic for stream-processing a CSV (file or chunk), parsing rows, validating, creating `CallDetailRecord` or `FailedCdrRecord` objects, and batching them for DB insertion. Returns `FileProcessingResult` (counts of successful/failed records for the processed stream).
+* **`TelecomCdr.HangfireJobs.CdrFileProcessingJobs.ProcessFileFromBlobAsync`**:
+    * Marked with `[AutomaticRetry(Attempts = 0)]` to prevent Hangfire from retrying on unhandled exceptions.
+    * Fetches its `JobStatus` record (for the file or chunk it's processing).
+    * Updates its `JobStatus` to `ProcessingStatus.Processing` directly via `IJobStatusRepository`.
+    * Calls `IFileProcessingService` to process the blob content.
+    * **Sends `JobStatusUpdateMessage` to Azure Storage Queue:** Upon completion (success or failure) of processing the file/chunk, it constructs a message containing the `CorrelationId` (of the file/chunk), `ParentCorrelationId` (if a chunk), `JobType`, the `FileProcessingResult`, and the determined final status (`Succeeded`, `Failed`, `PartiallySucceeded`) for that file/chunk. This message is sent to a dedicated queue via `IQueueService`.
+    * If sending to the queue fails critically, the Hangfire job itself will fail (and not retry).
+* **`TelecomCdr.AzureFunctions.UpdateJobStatusFromQueue` (Queue Triggered):**
+    * Listens to the job status update queue.
+    * Deserializes `JobStatusUpdateMessage`.
+    * Uses `IJobStatusRepository` to update the `JobStatus` record for the specific file/chunk (setting status, message, processed/failed record counts).
+    * If the message is for a chunk, it calls `IJobStatusRepository.IncrementProcessedChunkCountAsync`. This method, in turn, checks if all chunks for a master job are complete and, if so, calls `UpdateMasterJobStatusBasedOnChunksAsync` to aggregate results (total processed/failed records from all chunks) and set the final status of the master job.
+    * Handles deserialization errors by allowing the message to be retried by the Functions runtime and eventually dead-lettered.
+
+## 8. Asynchronous Job Status Tracking (Queue-Based)
+
+Described in detail in sections 6 and 7. This queue-based approach decouples the final status update from the Hangfire job execution, improving resilience. The `JobStatus` entity tracks the lifecycle from initial acceptance, through chunking (if applicable), to final completion or failure, including aggregated results for chunked master jobs.
 
 ## 9. Non-Functional Requirements (NFRs)
 
 ### Authentication & Authorization
-* **Current State**: Not implemented.
-* **Future Considerations**: JWT Bearer tokens, ASP.NET Core Identity, role-based/policy-based authorization.
+* Current State: Basic setup. API endpoints are open. Hangfire Dashboard is open.
+* Future: Implement JWT/OAuth for API, secure Hangfire Dashboard (e.g., ASP.NET Core Identity policies).
 
-### Performance
-* **Large File Uploads**: Streaming to Azure Blob Storage, background processing with Hangfire, batch database inserts.
-* **Database Queries**: Asynchronous operations, proper indexing, pagination for list endpoints.
-* **Connection Pooling**: Managed by EF Core and Redis client.
-* **Hangfire Worker Count**: Configurable to scale processing capacity.
+### Performance & Scalability
+* **Streaming I/O**: `CsvFileProcessingService` uses stream processing for large files.
+* **Batch Database Operations**: Reduces DB roundtrips.
+* **Asynchronous Processing**: Hangfire and Azure Functions for background tasks.
+* **File Chunking**: For very large files, allows parallel processing of parts of a single file across multiple Hangfire workers.
+* **Queue-Based Status Updates**: Decouples status updates, improving throughput and resilience.
+* **Database Provisioning**: SQL Server resources (CPU, IOPS, memory) must match the load.
+* **Hangfire Worker Scaling**: `TelecomCdr.Api` (or a dedicated Hangfire worker service) can be scaled out.
+* **Azure Function Scaling**: Azure Functions scale automatically based on load.
 
 ### Logging and Correlation
-* **Structured Logging**: Serilog with `X-Correlation-ID` propagation.
-* **`UploadCorrelationId`**: Used across services and stored in relevant entities/metadata.
+* **Serilog**: Structured logging to Console, File, and Application Insights.
+* **`UploadCorrelationId` / `CorrelationId`**: Propagated through the system for tracing individual uploads and their constituent jobs/chunks.
 
 ### Idempotency
-* **`Idempotency-Key` Header**: Supported for write operations via `IdempotencyAttribute`.
-* **Request Payload Hashing**: Used for validation against cached requests in Redis.
-* **Storage**: Redis is used for caching idempotency data.
+* **`Idempotency-Key` Header**: For API write operations.
+* **Request Payload Hashing & Redis**: `IdempotencyAttribute` uses Redis to store request hashes and cached responses to prevent duplicate operations.
+* **Hangfire Job Idempotency (Consideration)**: While Hangfire retries are disabled for the main processing job, if a job *could* be retried, the underlying data processing (e.g., record insertion) should ideally be idempotent (check if record exists before insert).
 
 ### Pagination
-* **Query Parameters**: List endpoints (`/caller`, `/recipient`, `/correlation`) accept `pageNumber` and `pageSize` query parameters.
-* **Response Format**: Responses for paginated endpoints use the `PagedResponse<T>` structure, including data for the current page and metadata (total count, total pages, etc.).
-* **Repository Support**: `ICdrRepository` methods implement efficient data fetching using `Skip()` and `Take()`.
+* Query endpoints for CDRs (`/caller`, `/recipient`, `/correlation`) support `pageNumber` and `pageSize`.
+* `PagedResponse<T>` structure used for responses.
 
 ## 10. Unit Testing
-
-* **Framework**: NUnit.
-* **Mocking**: Moq.
-* **Test Projects**: `Cdr.Application.Tests`, `Cdr.Infrastructure.Tests`, `Cdr.HangfireJobs.Tests`, `Cdr.AzureFunctions.Tests`.
-* **Coverage Target**: Aiming for >80% code coverage for core logic.
+* NUnit and Moq for testing Application, Infrastructure, Hangfire Jobs, and Azure Functions layers. Focus on business logic, service interactions, and error handling.
 
 ## 11. Local Development Setup (Docker, Azure Storage & Redis)
-
-A `docker-compose.yml` file is provided:
-* It spins up:
-    1.  `cdr-api`: The .NET API application (hosting Hangfire Server).
-    2.  `mssql-server`: A Microsoft SQL Server container (for CDRs, Job Statuses, Hangfire data).
-    3.  `redis`: A Redis container (for idempotency caching).
-* **Database Initialization**: Via `init-db.sh` and `setup.sql` in the MSSQL Docker image. The `setup.sql` should include table creation scripts for `CallDetailRecords` and `JobStatuses`.
-* **Azure Blob Storage**:
-    * For testing the `/upload-large` functionality locally, use the Azure Storage Emulator (Azurite). Ensure the emulator is running and accessible, and configure `appsettings.json` to point to it (e.g., `AzureBlobStorage:ConnectionString = "UseDevelopmentStorage=true"`).
-* **Azure Functions**:
-    * For local development of `Cdr.AzureFunctions`, use the Azure Functions Core Tools. Configure `local.settings.json` with `AZURE_STORAGE_CONNECTION_STRING` (pointing to Azurite) and `HANGFIRE_SQL_CONNECTION_STRING` (pointing to the Dockerized MSSQL).
-* **Usage**:
-    1.  Ensure Docker, Azurite, and Azure Functions Core Tools are running/available.
-    2.  Configure `appsettings.json` (for API) and `local.settings.json` (for Functions).
-    3.  Navigate to the `/docker` directory and run `docker-compose up --build`.
-    4.  Run the Azure Function locally using `func start`.
+* **`docker-compose.yml`**: Manages `cdr-api`, `mssql-server`, `redis`.
+* **`mssql/setup.sql`**: Initializes `CdrDb`, `HangfireDb`, and creates tables (`CallDetailRecords`, `JobStatuses`, `FailedCdrRecords`).
+* **Azure Storage Emulator (Azurite)**: Recommended for local blob and queue development. Configure connection strings in `appsettings.json` (for API) and `local.settings.json` (for Functions) to `UseDevelopmentStorage=true`.
+* **Azure Functions Core Tools**: For running `TelecomCdr.AzureFunctions` locally.
+* **Environment Variables**: `SA_PASSWORD` for SQL Server, connection strings for Azure services.
+* **`local.settings.json` (`TelecomCdr.AzureFunctions`):**
+    * `AzureWebJobsStorage`: For Functions runtime (can be Azurite).
+    * `HANGFIRE_SQL_CONNECTION_STRING`: For Hangfire client to enqueue jobs.
+    * `AZURE_QUEUE_STORAGE_CONNECTION_STRING`: For QueueTrigger and `AzureStorageQueueService`.
+    * `AZURE_QUEUE_STORAGE_JOB_STATUS_UPDATE_QUEUE_NAME`: Name of the job status queue.
+    * `MAIN_DB_CONNECTION_STRING`: For `IJobStatusRepository` to connect to the app's main DB.
+* **`appsettings.json` (`TelecomCdr.Api`):**
+    * `ConnectionStrings:CdrConnection`, `ConnectionStrings:HangfireConnection`.
+    * `AzureBlobStorage:ConnectionString`, `AzureBlobStorage:ContainerName`.
+    * `RedisSettings:ConnectionString`.
+    * `AzureQueueStorage:ConnectionString`, `AzureQueueStorage:JobStatusUpdateQueueName`.
+    * `ApplicationInsights:ConnectionString`.
+    * `Serilog` configuration.
 
 ## 12. Assumptions Made
-
-* **CSV File Format Consistency**: Header row expected. Columns: `caller_id, recipient, call_date, end_time, duration, cost, reference, currency`.
-* **`call_date` and `end_time` in CSV**: Assumed to be `yyyy-MM-dd` and `HH:mm:ss` respectively.
-* **Uniqueness of `reference`**: Unique constraint in the `CallDetailRecords` table.
-* **Stateless API** (except for idempotency cache).
-* **Development Environment**: Docker, .NET SDK, Azure Functions Core Tools available.
+* CSV Date/Time formats are consistent ("dd/MM/yyyy", "HH:mm:ss").
+* `Reference` field in CSV is unique per upload context.
+* Network connectivity between services (API, Functions, DB, Storage, Redis).
 
 ## 13. Future Enhancements
+* **API for Failed Records**: `GET /api/failedrecords/{correlationId}`.
+* **Retry Mechanism for Corrected Failed Records**.
+* **User Interface**: For job monitoring and data management.
+* **Advanced Filtering/Sorting** for query APIs.
+* **Security Hardening**: Full auth for API & Hangfire Dashboard.
+* **Distributed Tracing**: Enhance correlation across microservices/components.
+* **Durable Functions for Chunking**: For more robust large file splitting.
+* **Schema Validation for CSVs**: More advanced validation beyond basic field checks.
 
-* **Advanced Error Handling for CSVs**.
-* **Data Archival/Purging Strategy**.
-* **Security Hardening**.
-* **Scalability**: Horizontal scaling, distributed cache.
-* **Monitoring and Alerting**.
-* **API Versioning**.
-* **Configuration Management**.
-* **Integration Tests**.
-* **Blob Deletion Strategy**.
-* **WebSockets/SignalR** for real-time status updates.
-* **More Advanced Filtering/Sorting** for query endpoints (potentially combined with pagination).
+

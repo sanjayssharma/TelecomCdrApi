@@ -26,7 +26,7 @@ namespace Cdr.AzureFunctions
             builder.Services.AddDbContext<AppDbContext>(options =>
                 options.UseSqlServer(sqlConnectionString));
 
-            // 2. Register your repositories and services
+            // 2. Register repositories and services
             builder.Services.AddScoped<IJobStatusRepository, SqlJobStatusRepository>();
             builder.Services.AddScoped<ICdrRepository, SqlCdrRepository>();
             builder.Services.AddScoped<IFailedCdrRecordRepository, SqlFailedCdrRecordRepository>();
@@ -54,21 +54,11 @@ namespace Cdr.AzureFunctions
                     UseRecommendedIsolationLevel = true,
                     DisableGlobalLocks = true // if using SQL Azure
                 }));
-
-            // If the Azure Function app also HOSTS Hangfire jobs (less common for a simple enqueueing function, but possible)
-            // builder.Services.AddHangfireServer();
-            // More commonly, you only need the client to enqueue:
-            // The IBackgroundJobClient is typically registered by AddHangfire.
-
-            // 5. Register other services your functions might need
-            // builder.Services.AddScoped<IMyOtherService, MyOtherService>();
         }
 
-        // If using .NET 6+ IConfiguration might be built differently in FunctionsStartup
-        // or directly in Program.cs for isolated worker model.
         public override void ConfigureAppConfiguration(IFunctionsConfigurationBuilder builder)
         {
-            // This method allows you to add additional configuration sources
+            // This method will allow us to add additional configuration sources
             // For example, to load settings from Azure App Configuration or custom JSON files.
             // By default, it loads from local.settings.json (local) and App Settings (Azure).
             // builder.ConfigurationBuilder.AddJsonFile(Path.Combine(context.ApplicationRootPath, "appsettings.json"), optional: true, reloadOnChange: false);

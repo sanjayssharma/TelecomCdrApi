@@ -116,6 +116,7 @@ namespace TelecomCdr.API
                 builder.Services.AddScoped<IJobStatusRepository, SqlJobStatusRepository>();
                 builder.Services.AddScoped<IFailedCdrRecordRepository, SqlFailedCdrRecordRepository>();
                 builder.Services.AddScoped<IFileProcessingService, CsvFileProcessingService>();
+                builder.Services.AddScoped<IQueueService, AzureStorageQueueService>();
 
                 // *** Add MediatR for CQRS pattern ***
                 builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(ProcessCdrFileCommand).Assembly));

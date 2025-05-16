@@ -84,15 +84,8 @@ namespace TelecomCdr.Core.Features.CdrProcessing.Commands
 
             _logger.LogInformation("Enqueueing CDR file from blob {BlobName} for background processing. Original CorrelationId: {CorrelationId}",
                 blobName, request.CorrelationId);
-
-            // Pass the original request's CorrelationId to be stored with the CDRs
-            var jobId = _backgroundJobClient.Enqueue<IFileProcessingService>(
-                service => service.ProcessAndStoreCdrFileFromBlobAsync(containerName, blobName, request.CorrelationId, CancellationToken.None));
-
-            _logger.LogInformation("CDR file from blob {BlobName} enqueued with JobId {JobId}. Original CorrelationId: {CorrelationId}",
-                blobName, jobId, request.CorrelationId);
-
-            return jobId;
+                        
+            return request.CorrelationId.ToString();
         }
     }
 }

@@ -10,6 +10,7 @@ using Azure.Storage.Blobs;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Infrastructure.Persistence.Repositories;
 using Microsoft.EntityFrameworkCore;
+using TelecomCdr.AzureFunctions.Orchestrators;
 
 public class Program
 {
@@ -33,14 +34,14 @@ public class Program
 
                 if (string.IsNullOrEmpty(hangfireConnectionString))
                 {
-                    // Log this issue. A logger isn't easily available here before the host is built,
-                    // so Console.Error or a dedicated pre-host logger might be used for critical failures.
+                    // Log this issue. A _logger isn't easily available here before the host is built,
+                    // so Console.Error or a dedicated pre-host _logger might be used for critical failures.
                     Console.Error.WriteLine(
                         "FATAL: HANGFIRE_SQL_CONNECTION_STRING environment variable is not set. " +
                         "The Azure Function will not be able to enqueue Hangfire jobs. " +
                         "Ensure it is configured in local.settings.json or Azure Function App settings.");
 
-                    // Depending on how critical this is, you might throw an exception to prevent startup.
+                    // Depending on how critical this is, we might throw an exception to prevent startup.
                     throw new InvalidOperationException(
                         "HANGFIRE_SQL_CONNECTION_STRING is not configured. Cannot initialize Hangfire client.");
                 }
@@ -61,24 +62,22 @@ public class Program
                     .UseSqlServerStorage(hangfireConnectionString, new SqlServerStorageOptions
                     {}));
 
-                // 1. Register DbContext (Example for MsSqlJobStatusRepository)
+                // 1. Register DbContext (Example for SqlJobStatusRepository)
                 string sqlConnectionString = configuration.GetConnectionString("CdrConnectionString");
                 services.AddDbContext<AppDbContext>(options =>
                     options.UseSqlServer(sqlConnectionString));
 
-                // 2. Register your repositories and services
+                // 2. Register repositories and services
                 services.AddScoped<IJobStatusRepository, SqlJobStatusRepository>();
                 services.AddScoped<ICdrRepository, SqlCdrRepository>();
                 services.AddScoped<IFailedCdrRecordRepository, SqlFailedCdrRecordRepository>();
 
                 // *** REGISTER IBlobStorageService ***
-                // The AzureBlobStorageService itself might need IConfiguration (already available via hostContext)
-                // and ILogger (which is available by default for injection into services).
-                // Ensure your Cdr.AzureFunctions project references Cdr.Infrastructure and Cdr.Application.
                 string azureWebJobsStorage = configuration["AZURE_STORAGE_CONNECTION_STRING"];
                 services.AddSingleton(x => new BlobServiceClient(azureWebJobsStorage));
                 services.AddScoped<IBlobStorageService, AzureBlobStorageService>();
                 services.AddScoped<IFileProcessingService, CsvFileProcessingService>();
+                services.AddScoped<IBlobProcessingOrchestrator, BlobProcessingOrchestrator>();
                 // Or services.AddScoped if its dependencies are scoped and it's appropriate.
                 // Singleton is often fine for client services like this if they are thread-safe.
 

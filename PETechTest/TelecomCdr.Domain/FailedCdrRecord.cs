@@ -14,7 +14,7 @@ namespace TelecomCdr.Domain
         [MaxLength(100)] // Match the length of UploadCorrelationId in CallDetailRecord/JobStatus
         public string UploadCorrelationId { get; set; } = string.Empty;
 
-        public int? RowNumberInCsv { get; set; } // Optional: if you can track the row number
+        public int? RowNumberInCsv { get; set; }
 
         [MaxLength(1024)] // Store the problematic row or relevant parts
         public string? RawRowData { get; set; }

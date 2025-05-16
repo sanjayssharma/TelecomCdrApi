@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Storage.Queues" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\TelecomCdr.Abstraction\TelecomCdr.Abstraction.csproj" />
     <ProjectReference Include="..\TelecomCdr.Core\TelecomCdr.Core.csproj" />
     <ProjectReference Include="..\TelecomCdr.Domain\TelecomCdr.Domain.csproj" />

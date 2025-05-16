@@ -61,7 +61,7 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
             }
         }
 
-        public async Task<bool> CheckJobByBlobNameExistsAsync(string blobName, JobType jobType, CancellationToken cancellationToken = default)
+        public async Task<bool> CheckJobAlreadyQueuedAsync(string blobName, JobType jobType, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrEmpty(blobName))
                 throw new ArgumentException("blobName cannot be null or empty.", nameof(blobName));
@@ -150,7 +150,7 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
             else
             {
                 _logger.LogWarning("Job status not found for CorrelationId: {CorrelationId} during status update to {Status}.", correlationId, status);
-                // Depending on requirements, you might throw an exception or just log.
+                // Depending on requirements, we might throw an exception or just log.
                 // Throwing helps identify issues if a status record is expected.
                 throw new InvalidOperationException($"JobStatus with CorrelationId {correlationId} not found for status update.");
             }
@@ -302,6 +302,7 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
                     masterJob.Message = $"All {masterJob.TotalChunks} chunks processed successfully.";
                 }
                 masterJob.LastUpdatedAtUtc = DateTime.UtcNow;
+
                 _context.JobStatuses.Update(masterJob);
                 await _context.SaveChangesAsync();
                 _logger.LogInformation("Master job {ParentCorrelationId} status updated to {Status} based on chunk completion.", parentCorrelationId, masterJob.Status);
@@ -333,6 +334,47 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
             {
                 _logger?.LogWarning($"JobStatus not found for CorrelationId: {correlationId} during UpdateJobStatusProcessingResultAsync. Result not updated.");
                 throw new KeyNotFoundException($"JobStatus with CorrelationId {correlationId} not found for processing result update.");
+            }
+        }
+
+        /// <summary>
+        /// Increments the processed and (if applicable) successful/failed chunk counts on a master job status.
+        /// After incrementing, it triggers an update to the master job's overall status if all chunks are complete.
+        /// </summary>
+        public async Task IncrementProcessedChunkCountAsync(Guid? parentCorrelationId, bool chunkSucceeded)
+        {
+            if (!parentCorrelationId.HasValue || parentCorrelationId == Guid.Empty)
+            {
+                _logger.LogWarning("IncrementProcessedChunkCountAsync called with empty parentCorrelationId.");
+                return;
+            }
+
+            var masterJobStatus = await GetJobStatusByCorrelationIdAsync(parentCorrelationId.Value);
+            if (masterJobStatus != null && masterJobStatus.Type == JobType.Master)
+            {
+                masterJobStatus.ProcessedChunks = (masterJobStatus.ProcessedChunks ?? 0) + 1;
+                if (chunkSucceeded)
+                {
+                    masterJobStatus.SuccessfulChunks = (masterJobStatus.SuccessfulChunks ?? 0) + 1;
+                }
+                else
+                {
+                    masterJobStatus.FailedChunks = (masterJobStatus.FailedChunks ?? 0) + 1;
+                }
+
+                masterJobStatus.LastUpdatedAtUtc = DateTime.UtcNow;
+                _context.JobStatuses.Update(masterJobStatus);
+                await _context.SaveChangesAsync(); // Save intermediate chunk counts
+
+                _logger.LogInformation("Master job {ParentCorrelationId}: ProcessedChunks={Processed}, SuccessfulChunks={Successful}, FailedChunks={Failed}",
+                    parentCorrelationId, masterJobStatus.ProcessedChunks, masterJobStatus.SuccessfulChunks, masterJobStatus.FailedChunks);
+
+                // After incrementing, check if all chunks are done to update master status
+                await UpdateMasterJobStatusBasedOnChunksAsync(parentCorrelationId.Value);
+            }
+            else
+            {
+                _logger.LogWarning("Could not find master job {ParentCorrelationId} to increment chunk count, or it is not a master job type.", parentCorrelationId);
             }
         }
     }

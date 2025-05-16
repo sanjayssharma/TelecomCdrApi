@@ -2,7 +2,6 @@
 using CsvHelper.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
-using System.IO.Compression;
 using System.Text;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Interfaces.Service;
@@ -55,7 +54,7 @@ namespace TelecomCdr.Infrastructure.Services
                 // *** CRITICAL: DownloadFileAsync should return a stream that can be read progressively ***
                 // Azure SDK's DownloadStreamingAsync or DownloadContentAsync().Value.Content is suitable here.
                 using Stream blobStream = await _blobStorageService.DownloadFileAsync(containerName, blobName);
-                if (blobStream == null || blobStream == Stream.Null || blobStream.Length == 0)
+                if (blobStream == null || blobStream == Stream.Null)
                 {
                     _logger.LogError("Blob {BlobName} from container {ContainerName} not found or is empty.", blobName, containerName);
 
@@ -138,6 +137,7 @@ namespace TelecomCdr.Infrastructure.Services
                             uploadCorrelationId
                         );
                         successfullCdrBatch.Add(cdr);
+                        //result.ProcessedRecordsCount++;
                     }
                     catch (Exception ex)
                     {
