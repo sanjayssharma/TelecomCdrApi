@@ -2,7 +2,6 @@
 using Microsoft.Extensions.Logging;
 using TelecomCdr.Abstraction.Interfaces.Service;
 using TelecomCdr.DurableFunctions.Dtos;
-// Define BlobMetadataInput and BlobMetadataResult DTOs if not already defined
 
 public class GetBlobMetadataActivityFunction
 {
@@ -20,10 +19,12 @@ public class GetBlobMetadataActivityFunction
     {
         _logger.LogInformation("Getting metadata for blob: {ContainerName}/{BlobName}", input.ContainerName, input.BlobName);
         
-        // var properties = await _blobService.GetBlobPropertiesAsync(input.ContainerName, input.BlobName);
-        // For now, returning dummy data. Replace with actual call.
-        // return new BlobMetadataResult { Size = properties?.ContentLength ?? 0, Metadata = properties?.Metadata ?? new Dictionary<string,string>() };
-        _logger.LogWarning("GetBlobMetadataActivityFunction returning dummy data. Implement actual blob property fetching.");
-        return new BlobMetadataResult { Size = 1024 * 1024 * 600 }; // Dummy size > 500MB
+        var (Size, Metadata) = await _blobService.GetBlobPropertiesAsync(input.ContainerName, input.BlobName);
+
+        return new BlobMetadataResult 
+        { 
+            Size = Size, 
+            Metadata = Metadata.ToDictionary() 
+        };
     }
 }

@@ -37,6 +37,27 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
             }
         }
 
+        public async Task AddBatchAsync(IEnumerable<CallDetailRecord> records)
+        {
+            if (records == null || !records.Any())
+            {
+                _logger.LogWarning("AddBatchAsync called with no records.");
+                return;
+            }
+
+            try
+            {
+                await _context.CallDetailRecords.AddRangeAsync(records);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error adding batch of CDR records.");
+                // Handle or rethrow exception as appropriate
+                throw;
+            }
+        }
+
         public async Task<CallDetailRecord?> GetByReferenceAsync(string reference, CancellationToken cancellationToken = default)
         {
             return await _context.CallDetailRecords

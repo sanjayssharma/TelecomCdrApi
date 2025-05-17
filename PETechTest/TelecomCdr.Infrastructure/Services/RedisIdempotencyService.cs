@@ -21,6 +21,11 @@ namespace TelecomCdr.Infrastructure.Services
             IConfiguration configuration,
             ILogger<RedisIdempotencyService> logger)
         {
+            if (connectionMultiplexer == null)
+            {
+                throw new ArgumentNullException(nameof(connectionMultiplexer));
+            }
+
             _redisDatabase = connectionMultiplexer.GetDatabase();
             _logger = logger;
 
@@ -51,6 +56,21 @@ namespace TelecomCdr.Infrastructure.Services
                 _logger.LogInformation("Idempotency key '{RedisKey}' not found in cache.", redisKey);
                 return null;
             }
+            catch (JsonException jsonEx)
+            {
+                _logger.LogError(jsonEx, "Failed to deserialize cached response for idempotency key '{RedisKey}'.", redisKey);
+                return null;
+            }
+            catch (RedisServerException ex)
+            {
+                _logger.LogError(ex, "Redis server error while retrieving idempotency key '{RedisKey}'.", redisKey);
+                return null;
+            }
+            catch (RedisTimeoutException ex)
+            {
+                _logger.LogError(ex, "Redis timeout while retrieving idempotency key '{RedisKey}'.", redisKey);
+                return null;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error retrieving idempotency key '{RedisKey}' from Redis.", redisKey);
@@ -65,6 +85,7 @@ namespace TelecomCdr.Infrastructure.Services
                 _logger.LogWarning("Cannot cache response for null or whitespace idempotency key.");
                 return;
             }
+
             if (string.IsNullOrWhiteSpace(requestPayloadHash))
             {
                 _logger.LogWarning("Request payload hash was null or whitespace for idempotency key {IdempotencyKey}. Not caching.", idempotencyKey);
@@ -84,7 +105,7 @@ namespace TelecomCdr.Infrastructure.Services
                 };
 
                 string serializedResponse = JsonSerializer.Serialize(responseToCache);
-                bool success = await _redisDatabase.StringSetAsync(redisKey, serializedResponse, _defaultExpiry);
+                bool success = await _redisDatabase.StringSetAsync(redisKey, serializedResponse, _defaultExpiry, When.Always, CommandFlags.None);
 
                 if (success)
                 {

@@ -1,8 +1,7 @@
 ﻿using Azure.Storage.Queues;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 using TelecomCdr.Abstraction.Interfaces.Service;
 using TelecomCdr.Abstraction.Models;
 
@@ -13,7 +12,6 @@ namespace TelecomCdr.Infrastructure.Services
         private readonly QueueClient _queueClient;
         private readonly ILogger<AzureStorageQueueService> _logger;
         private readonly string _queueName;
-        private readonly JsonSerializerOptions _serializerOptions;
 
         public AzureStorageQueueService(IConfiguration configuration, ILogger<AzureStorageQueueService> logger)
         {
@@ -32,12 +30,6 @@ namespace TelecomCdr.Infrastructure.Services
                 _logger.LogError("Azure Queue Storage queue name ('AzureQueueStorage:JobStatusUpdateQueueName') is not configured.");
                 throw new InvalidOperationException("Azure Queue Storage queue name for job status updates is missing.");
             }
-
-            _serializerOptions = new JsonSerializerOptions
-            {
-                WriteIndented = false, // Keep messages compact
-                Converters = { new JsonStringEnumConverter() }
-            };
 
             try
             {
@@ -60,7 +52,7 @@ namespace TelecomCdr.Infrastructure.Services
 
             try
             {
-                string serializedMessage = JsonSerializer.Serialize(message, _serializerOptions);
+                string serializedMessage = JsonConvert.SerializeObject(message);
                 await _queueClient.SendMessageAsync(serializedMessage);
 
                 _logger.LogInformation("Successfully sent job status update message to queue '{QueueName}' for CorrelationId '{CorrelationId}'.", _queueName, message.CorrelationId);

@@ -4,6 +4,7 @@ using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Interfaces.Service;
 using TelecomCdr.Abstraction.Models;
 using TelecomCdr.Domain;
+using TelecomCdr.Domain.Helpers;
 
 namespace TelecomCdr.Hangfire.Jobs
 {
@@ -53,6 +54,7 @@ namespace TelecomCdr.Hangfire.Jobs
                 // or moving the job to a dead-letter queue if Hangfire supports it.
                 throw new ArgumentNullException(nameof(blobName));
             }
+
             if (string.IsNullOrWhiteSpace(containerName))
             {
                 _logger.LogError("Container name cannot be null or whitespace for Hangfire job processing blob {BlobName}.", blobName);
@@ -62,7 +64,7 @@ namespace TelecomCdr.Hangfire.Jobs
             var currentJobStatus = await _jobStatusRepository.GetJobStatusByCorrelationIdAsync(jobCorrelationId);
             if (currentJobStatus == null)
             {
-                _logger.LogError($"JobStatus not found for JobCorrelationId: {jobCorrelationId}. Cannot process blob {blobName}.");
+                _logger.LogError("JobStatus not found for JobCorrelationId: {JobCorrelationId}. Cannot process blob {BlobName}.", jobCorrelationId, blobName);
                 // This indicates a problem, as the JobStatus should have been created before enqueuing.
                 // Depending on policy, could attempt to create one or simply fail.
                 return;
@@ -71,95 +73,89 @@ namespace TelecomCdr.Hangfire.Jobs
             try
             {
                 // Update current job (single file or chunk) status to Processing
-                currentJobStatus.Status = ProcessingStatus.Processing;
-                currentJobStatus.LastUpdatedAtUtc = DateTime.UtcNow;
-                currentJobStatus.Message = "Job picked up by Hangfire worker and is now processing.";
+                await _jobStatusRepository.UpdateJobStatusAsync(currentJobStatus
+                    .WithStatus(ProcessingStatus.Processing)
+                    .WithMessage("Job picked up by Hangfire worker and is now processing."));
 
-                await _jobStatusRepository.UpdateJobStatusAsync(currentJobStatus);
-
-                _logger.LogInformation($"JobStatus for {jobCorrelationId} updated to Processing.");
+                _logger.LogInformation("JobStatus for {JobCorrelationId} updated to Processing.", jobCorrelationId);
             }
             catch (Exception statusUpdateEx)
             {
-                _logger.LogError(statusUpdateEx, "Failed to update job status to 'Processing' for Correlation ID '{CorrelationId}'. Processing will continue but status might be stale.", jobCorrelationId);
+                _logger.LogError(statusUpdateEx, "Failed to update job status to 'Processing' for Correlation ID '{JobCorrelationId}'. Processing will continue but status might be stale.", jobCorrelationId);
             }
 
-            FileProcessingResult? processingResult = new FileProcessingResult();
+            FileProcessingResult? processingResult = new();
             var determinedStatus = ProcessingStatus.Failed; // Default outcome
             var determinedMessage = "Processing did not complete as expected or an error occurred before result determination.";
-
 
             try
             {
                 // The IFileProcessingService handles downloading from blob, parsing, and storing.
                 processingResult = await _fileProcessingService.ProcessAndStoreCdrFileFromBlobAsync(containerName, blobName, jobCorrelationId);
 
-                determinedMessage = $"File processed. Successful records: {processingResult.ProcessedRecordsCount}, Failed records: {processingResult.FailedRecordsCount}.";
-                if (processingResult.ErrorMessages.Any())
+                determinedMessage = $"File processed. Successful records: {processingResult.SuccessfulRecordsCount}, Failed records: {processingResult.FailedRecordsCount}.";
+                if (processingResult.HasErrors)
                 {
-                    // determinedMessage += $" Some errors: {string.Join("; ", processingResult.ErrorMessages.Take(3))}"; // Show first few errors
+                    determinedMessage += $" Some errors: {string.Join("; ", processingResult.ErrorMessages.Take(3))}"; // Show first few errors
                 }
 
-                currentJobStatus.ProcessedRecordsCount = processingResult.ProcessedRecordsCount;
-                currentJobStatus.FailedRecordsCount = processingResult.FailedRecordsCount;
+                determinedStatus = processingResult.DetermineStatus();
 
-                // If FailedRecordsCount == -1 (file level error), status remains Failed.
-                // If SuccessfulRecords is 0 and FailedRecords > 0, it remains Failed.
-                if (processingResult.ProcessedRecordsCount > 0 && processingResult.FailedRecordsCount == 0 && processingResult.FailedRecordsCount != -1)
-                {
-                    determinedStatus = ProcessingStatus.Succeeded;
-                }
-                else if (processingResult.ProcessedRecordsCount > 0 && processingResult.FailedRecordsCount > 0)
-                {
-                    determinedStatus = ProcessingStatus.PartiallySucceeded;
-                }
-
-                _logger.LogInformation("File processing service completed for Correlation ID '{CorrelationId}'. Determined Outcome: {Status} - {Message}",
+                _logger.LogInformation("File processing service completed for Correlation ID '{JobCorrelationId}'. Determined Outcome: {Status} - {Message}",
                     jobCorrelationId, determinedStatus, determinedMessage);
 
                 // If a critical file-level error occurred (e.g., file not found by CsvFileProcessingService)
-                if (determinedStatus == ProcessingStatus.Failed && processingResult.FailedRecordsCount == -1)
+                if (processingResult.HasCriticalErrors)
                 {
-                    _logger.LogError("Critical file-level error for {BlobName}, CorrelationId {CorrelationId}. Details: {ErrorMessages}. This status will be sent to the queue.",
+                    _logger.LogError("Critical file-level error for {BlobName}, CorrelationId {JobCorrelationId}. Details: {ErrorMessages}. This status will be sent to the queue.",
                         blobName, jobCorrelationId, string.Join("; ", processingResult.ErrorMessages));
                 }
             }
             catch (Exception ex) // Catch exceptions from ProcessAndStoreCdrFileFromBlobAsync or status updates
             {
-                _logger.LogError(ex, "Hangfire job CRITICAL FAILURE: Error processing blob '{BlobName}' with Correlation ID '{CorrelationId}'.",
+                _logger.LogError(ex, "Hangfire job CRITICAL FAILURE: Error processing blob '{BlobName}' with Correlation ID '{JobCorrelationId}'.",
                     blobName, jobCorrelationId);
 
                 determinedStatus = ProcessingStatus.Failed; // Ensure status is Failed
-                determinedMessage = $"Unhandled processing error: {ex.Message.Substring(0, Math.Min(ex.Message.Length, 800))}"; // Truncate
+                determinedMessage = $"Unhandled processing error: {ex.Message.Substring(0, Math.Min(ex.Message.Length, 1000))}"; // Truncate
                 processingResult.ErrorMessages.Add(determinedMessage); // Add to processing result for queue message
                 processingResult.FailedRecordsCount = currentJobStatus?.Type == JobType.Master ? (currentJobStatus.TotalChunks ?? 1) : 1; // Mark all as failed in this context
-                processingResult.ProcessedRecordsCount = 0;
+                processingResult.SuccessfulRecordsCount = 0;
                 
                 // throw; // Hangfire should not retry the job
             }
             finally // Ensure message is sent to queue regardless of processing outcome
             {
-                // Construct the message for the queue
-                var statusUpdateMessage = new JobStatusUpdateMessage
-                {
-                    CorrelationId = jobCorrelationId, // This is the ID of the current job/chunk
-                    ProcessingResult = processingResult,
-                    ParentCorrelationId = currentJobStatus?.ParentCorrelationId, // Pass along if it's a chunk
-                    JobType = currentJobStatus?.Type ?? JobType.SingleFile,     // Pass job type
-                    DeterminedStatus = determinedStatus,
-                    DeterminedMessage = determinedMessage.Length > 2000 ? determinedMessage.Substring(0, 2000) : determinedMessage
-                };
-
                 try
                 {
-                    // *** SENDING THE MESSAGE TO THE QUEUE ***
-                    await _queueService.SendJobStatusUpdateAsync(statusUpdateMessage);
-                    _logger.LogInformation("Successfully sent job status update to queue for CorrelationId: {CorrelationId}. Status: {Status}",
-                        jobCorrelationId, determinedStatus);
+                    // Update the job status in the database with the final outcome
+                    await _jobStatusRepository.UpdateJobStatusAsync(currentJobStatus
+                    .WithMessage(determinedMessage)
+                    .WithStatus(determinedStatus)
+                    .WithProcessedRecordsCount(processingResult.SuccessfulRecordsCount)
+                    .WithFailedRecordsCount(processingResult.FailedRecordsCount));
+
+                     await _jobStatusRepository.IncrementProcessedChunkCountAsync(currentJobStatus.ParentCorrelationId, determinedStatus == ProcessingStatus.Succeeded);
+
+                    //// Construct the message for the queue which will update the job status
+                    //var statusUpdateMessage = new JobStatusUpdateMessage
+                    //{
+                    //    CorrelationId = jobCorrelationId, // This is the ID of the current job/chunk
+                    //    ProcessingResult = processingResult,
+                    //    ParentCorrelationId = currentJobStatus?.ParentCorrelationId, // Pass along if it's a chunk
+                    //    JobType = currentJobStatus?.Type ?? JobType.SingleFile,     // Pass job type
+                    //    DeterminedStatus = determinedStatus,
+                    //    DeterminedMessage = determinedMessage.Length > 2000 ? determinedMessage.Substring(0, 2000) : determinedMessage
+                    //};
+
+                    //// *** SENDING THE MESSAGE TO THE QUEUE ***
+                    //await _queueService.SendJobStatusUpdateAsync(statusUpdateMessage);
+                    //_logger.LogInformation("Successfully sent job status update to queue for CorrelationId: {JobCorrelationId}. Status: {Status}",
+                    //    jobCorrelationId, determinedStatus);
                 }
                 catch (Exception queueEx)
                 {
-                    _logger.LogCritical(queueEx, "CRITICAL FAILURE: Failed to send job status update to queue for CorrelationId: {CorrelationId}. Status update might be lost. Determined Status was {DeterminedStatus}.",
+                    _logger.LogCritical(queueEx, "CRITICAL FAILURE: Failed to send job status update to queue for JobCorrelationId: {CorrelationId}. Status update might be lost. Determined Status was {DeterminedStatus}.",
                         jobCorrelationId, determinedStatus);
                     // If sending to the queue fails, this is a critical problem.
                     // The Hangfire job will be marked as failed due to [AutomaticRetry(Attempts=0)]

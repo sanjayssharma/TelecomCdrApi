@@ -31,9 +31,9 @@ namespace TelecomCdr.DurableFunctions.Activities
                 chunkInfo.ChunkBlobName, chunkInfo.ChunkCorrelationId,
                 (await _jobStatusRepository.GetJobStatusByCorrelationIdAsync(chunkInfo.ChunkCorrelationId))?.ParentCorrelationId?.ToString() ?? "N/A");
 
-            FileProcessingResult result = new FileProcessingResult();
-            ProcessingStatus finalChunkStatus = ProcessingStatus.Failed;
-            string statusMessage = "Chunk processing encountered an error.";
+            var result = new FileProcessingResult();
+            var finalChunkStatus = ProcessingStatus.Failed;
+            var statusMessage = "Chunk processing encountered an error.";
 
             try
             {
@@ -47,14 +47,14 @@ namespace TelecomCdr.DurableFunctions.Activities
                     chunkInfo.ChunkCorrelationId // Pass chunk's own ID for its records
                 );
 
-                statusMessage = $"Chunk processed. Successful: {result.ProcessedRecordsCount}, Failed: {result.FailedRecordsCount}.";
+                statusMessage = $"Chunk processed. Successful: {result.SuccessfulRecordsCount}, Failed: {result.FailedRecordsCount}.";
                 if (result.ErrorMessages.Any()) { statusMessage += $" Errors: {string.Join("; ", result.ErrorMessages.Take(2))}"; }
 
-                if (result.ProcessedRecordsCount > 0 && result.FailedRecordsCount == 0 && result.FailedRecordsCount != -1)
+                if (result.SuccessfulRecordsCount > 0 && result.FailedRecordsCount == 0 && result.FailedRecordsCount != -1)
                 {
                     finalChunkStatus = ProcessingStatus.Succeeded;
                 }
-                else if (result.ProcessedRecordsCount > 0 && result.FailedRecordsCount > 0)
+                else if (result.SuccessfulRecordsCount > 0 && result.FailedRecordsCount > 0)
                 {
                     finalChunkStatus = ProcessingStatus.PartiallySucceeded;
                 }
@@ -77,7 +77,7 @@ namespace TelecomCdr.DurableFunctions.Activities
                     chunkInfo.ChunkCorrelationId,
                     finalChunkStatus,
                     statusMessage.Length > 2000 ? statusMessage.Substring(0, 2000) : statusMessage,
-                    result.ProcessedRecordsCount,
+                    result.SuccessfulRecordsCount,
                     result.FailedRecordsCount == -1 ? null : (int?)result.FailedRecordsCount
                 );
 

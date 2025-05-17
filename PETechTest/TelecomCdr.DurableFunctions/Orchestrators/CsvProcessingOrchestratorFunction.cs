@@ -9,6 +9,9 @@ using TelecomCdr.DurableFunctions.Dtos;
 public class CsvProcessingOrchestratorFunction
 {
     // Define constants for thresholds, etc. (or get from config)
+    // Get Chunk threshold from configuration or define it here
+    // For example, 500MB
+    // This is a placeholder value; adjust as needed based on your requirements.
     private const long CHUNK_THRESHOLD_BYTES = 500 * 1024 * 1024; // 500MB
 
     [Function(nameof(CsvProcessingOrchestratorFunction))]
@@ -26,8 +29,8 @@ public class CsvProcessingOrchestratorFunction
         try
         {
             // 1. Update Master Job Status to Processing
-            await context.CallActivityAsync(nameof(UpdateJobStatusActivityFunction), // New activity for status updates
-                new JobStatusActivityInput { CorrelationId = input.MasterCorrelationId, Status = ProcessingStatus.Processing, Message = "Orchestration started." });
+            await context.CallActivityAsync(nameof(UpdateJobStatusActivityFunction),
+                new JobStatusActivityInput { CorrelationId = input.MasterCorrelationId, Status = ProcessingStatus.Processing, Message = "Orchestration started.", Type = JobType.Master });
 
             // 2. Get Blob Metadata (Size)
             var blobMetadata = await context.CallActivityAsync<BlobMetadataResult>(nameof(GetBlobMetadataActivityFunction),
@@ -44,7 +47,7 @@ public class CsvProcessingOrchestratorFunction
             masterJobStatus.OriginalBlobSize = blobMetadata.Size;
 
             // 3. Chunking Decision
-            List<ChunkInfo> chunksToProcess = new List<ChunkInfo>();
+            var chunksToProcess = new List<ChunkInfo>();
             if (blobMetadata.Size > CHUNK_THRESHOLD_BYTES)
             {
                 logger.LogInformation("Blob {BlobName} size {Size} > threshold {Threshold}. Initiating chunking.",

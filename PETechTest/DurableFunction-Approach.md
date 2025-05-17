@@ -162,14 +162,14 @@ Our existing services will be injected into these Durable Functions (primarily i
 
 ## 5. Project Structure Considerations
 
-* **`Cdr.AzureFunctions` Project:**
+* **`TelecomCdr.DurableFunctions` Project:**
     * Will host all Durable Functions (Starter, Orchestrator, Activities).
     * Needs project references to:
-        * `Cdr.Application` (for interfaces like `IBlobStorageService`, `IJobStatusRepository`, `ICsvFileProcessingService`, and DTOs like `FileProcessingResult`, `ChunkInfo`).
-        * `Cdr.Domain` (for entities like `JobStatus`, `CallDetailRecord`, `FailedCdrRecord`).
-        * Potentially `Cdr.Infrastructure` if concrete service implementations are directly injected (though injecting interfaces is preferred).
-* **`Cdr.Application` Project:**
+        * `TelecomCdr.Core` (for interfaces like `IBlobStorageService`, `IJobStatusRepository`, `ICsvFileProcessingService`, and DTOs like `FileProcessingResult`, `ChunkInfo`).
+        * `TelecomCdr.Domain` (for entities like `JobStatus`, `CallDetailRecord`, `FailedCdrRecord`).
+        * Potentially `TelecomCdr.Infrastructure` if concrete service implementations are directly injected (though injecting interfaces is preferred).
+* **`TelecomCdr.Abstraction` Project:**
     * May define new interfaces like `ISplitStrategy` if CSV splitting logic becomes very complex and needs to be abstracted.
-* **`Cdr.Infrastructure` Project:**
+* **`TelecomCdr.Infrastructure` Project:**
     * `CsvFileProcessingService` is heavily reused.
     * `MssqlJobStatusRepository` needs to be robust in handling master/chunk status updates.

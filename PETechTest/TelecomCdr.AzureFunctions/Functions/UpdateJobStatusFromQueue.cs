@@ -1,7 +1,7 @@
 ﻿using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Models;
 using TelecomCdr.Domain;
@@ -12,7 +12,6 @@ namespace TelecomCdr.AzureFunctions.Functions
     {
         private readonly IJobStatusRepository _jobStatusRepository;
         private readonly ILogger<UpdateJobStatusFromQueue> _logger;
-        private readonly JsonSerializerOptions _jsonSerializerOptions;
 
         public UpdateJobStatusFromQueue(
             IJobStatusRepository jobStatusRepository,
@@ -20,14 +19,6 @@ namespace TelecomCdr.AzureFunctions.Functions
         {
             _jobStatusRepository = jobStatusRepository ?? throw new ArgumentNullException(nameof(jobStatusRepository));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-
-            _jsonSerializerOptions = new JsonSerializerOptions
-            {
-                // Makes deserialization robust to case differences in JSON properties
-                PropertyNameCaseInsensitive = true,
-                // Ensures string representations of enums in JSON are correctly mapped back to C# enums
-                Converters = { new JsonStringEnumConverter() }
-            };
         }
 
         // The queue name here must match the one configured in AzureStorageQueueService
@@ -35,7 +26,7 @@ namespace TelecomCdr.AzureFunctions.Functions
         // Connection is the name of the App Setting holding the Azure Storage connection string.
         [Function(nameof(UpdateJobStatusFromQueue))]
         public async Task Run(
-            [QueueTrigger("%AZURE_QUEUE_STORAGE_JOB_STATUS_UPDATE_QUEUE_NAME%", Connection = "AZURE_QUEUE_STORAGE_CONNECTION_STRING")] string queueMessage)
+            [QueueTrigger("%JobStatusQueueName%", Connection = "AZURE_QUEUE_STORAGE_CONNECTION_STRING")] string queueMessage)
         {
             _logger.LogInformation("Queue trigger function processed message (first 1000 chars): {QueueMessageSnippet}",
                 queueMessage.Length > 1000 ? queueMessage.Substring(0, 1000) + "..." : queueMessage);
@@ -43,7 +34,7 @@ namespace TelecomCdr.AzureFunctions.Functions
             JobStatusUpdateMessage? statusUpdate;
             try
             {
-                statusUpdate = JsonSerializer.Deserialize<JobStatusUpdateMessage>(queueMessage, _jsonSerializerOptions);
+                statusUpdate = JsonConvert.DeserializeObject<JobStatusUpdateMessage>(queueMessage);
                 if (statusUpdate == null || statusUpdate.CorrelationId != Guid.Empty)
                 {
                     _logger.LogError("Failed to deserialize queue message or CorrelationId is missing. Message: {QueueMessage}", queueMessage);
@@ -51,7 +42,7 @@ namespace TelecomCdr.AzureFunctions.Functions
                     return;
                 }
             }
-            catch (JsonException jsonEx)
+            catch (Newtonsoft.Json.JsonException jsonEx)
             {
                 _logger.LogError(jsonEx, "JSON deserialization error for queue message: {QueueMessage}", queueMessage);
                 // Probably move to a dead-letter queue.
@@ -68,7 +59,7 @@ namespace TelecomCdr.AzureFunctions.Functions
                     statusUpdate.CorrelationId,
                     statusUpdate.DeterminedStatus,
                     statusUpdate.DeterminedMessage,
-                    statusUpdate.ProcessingResult.ProcessedRecordsCount,
+                    statusUpdate.ProcessingResult.SuccessfulRecordsCount,
                     statusUpdate.ProcessingResult.FailedRecordsCount == -1 ? null : statusUpdate.ProcessingResult.FailedRecordsCount
                 );
                 _logger.LogInformation("Successfully updated status for Job/Chunk {CorrelationId} to {Status}.",

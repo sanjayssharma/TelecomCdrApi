@@ -1,5 +1,4 @@
-﻿using Hangfire.Common;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Domain;
@@ -175,7 +174,7 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
                 {
                     jobStatus.TotalChunks = totalChunks;
                 }
-                // UpdatedAt will be set by UpdateJobStatusAsync
+
                 await UpdateJobStatusAsync(jobStatus);
             }
             else

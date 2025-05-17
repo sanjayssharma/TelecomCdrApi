@@ -146,7 +146,7 @@ namespace TelecomCdr.API
                         UseRecommendedIsolationLevel = true,
                         DisableGlobalLocks = true
                     }));
-                builder.Services.AddHangfireServer(options => { options.WorkerCount = Environment.ProcessorCount * 2; });
+                builder.Services.AddHangfireServer(options => { options.WorkerCount = Environment.ProcessorCount * 3; });
 
                 builder.Services.AddHttpContextAccessor();
 

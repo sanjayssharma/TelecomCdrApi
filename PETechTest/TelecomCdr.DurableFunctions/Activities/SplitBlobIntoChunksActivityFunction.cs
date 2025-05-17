@@ -6,6 +6,11 @@ using TelecomCdr.DurableFunctions.Dtos;
 
 namespace TelecomCdr.DurableFunctions.Activities
 {
+    // Note this is a sample implementation. In a real-world scenario, you would need to handle CSV parsing,
+    // chunking logic, and error handling more robustly.
+    // This function is responsible for splitting a large blob into smaller chunks.
+    // It uses a simplified approach for demonstration purposes.
+    // In a production scenario, you would need to implement robust CSV parsing and chunking logic.
     public class SplitBlobIntoChunksActivityFunction
     {
         private readonly IBlobStorageService _blobService;
@@ -38,8 +43,8 @@ namespace TelecomCdr.DurableFunctions.Activities
                 // Simulate creating 3 chunks
                 for (int i = 1; i <= 3; i++)
                 {
-                    var chunkBlobName = $"{Path.GetFileNameWithoutExtension(input.OriginalBlobName)}_chunk{i}{Path.GetExtension(input.OriginalBlobName)}";
                     var chunkCorrelationId = Guid.NewGuid();
+                    var chunkBlobName = $"{Path.GetFileNameWithoutExtension(input.OriginalBlobName)}_chunk{i}{Path.GetExtension(input.OriginalBlobName)}";
 
                     // In a real scenario, you would:
                     // 1. Read a segment of the original blob (CSV-aware)
@@ -54,7 +59,7 @@ namespace TelecomCdr.DurableFunctions.Activities
                         dummyStream,
                         new Dictionary<string, string> {
                         { "ParentCorrelationId", input.MasterCorrelationId.ToString() },
-                        { "UploadCorrelationId", input.MasterCorrelationId.ToString() },
+                        { "UploadCorrelationId", chunkCorrelationId.ToString() },
                         { "ChunkNumber", i.ToString() },
                         { "IsChunk", "true" }
                         });

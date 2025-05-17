@@ -6,6 +6,7 @@ using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Interfaces.Service;
 using TelecomCdr.Abstraction.Models;
 using TelecomCdr.Domain;
+using TelecomCdr.Domain.Helpers;
 
 namespace TelecomCdr.AzureFunctions.Functions
 {
@@ -17,6 +18,7 @@ namespace TelecomCdr.AzureFunctions.Functions
         private readonly ILogger<EnqueueCdrProcessingJob> _logger;
 
         private readonly string _defaultContainerName;
+        private const string UploadCorrelationIdKey = "UploadCorrelationId";
 
         public EnqueueCdrProcessingJob(
             IBlobStorageService blobStorageService,
@@ -90,21 +92,18 @@ namespace TelecomCdr.AzureFunctions.Functions
             // containerName would be "cdr-uploads".
             var containerName = blobUri?.Segments.Length > 1 ? blobUri.Segments[1].TrimEnd('/') : _defaultContainerName; // Basic extraction
 
-            if (metadata == null || !metadata.TryGetValue("UploadCorrelationId", out var uploadCorrelationId) || string.IsNullOrEmpty(uploadCorrelationId))
-            {
-                _logger.LogError($"Missing 'UploadCorrelationId' in blob metadata for {blobName}. Processing cannot continue.");
-                // Optionally, move to an error container or log to a dead-letter queue
-                return;
-            }
-
-            if (!Guid.TryParse(uploadCorrelationId, out var originalUploadCorrelationId))
+            var (correlationIdExists, uploadCorrelationId) = GetCorrelationIdFromMetadata(metadata);
+            if (!correlationIdExists)
             {
                 _logger.LogError($"Invalid 'UploadCorrelationId' in blob metadata for {blobName}. Processing cannot continue.");
                 return;
             }
 
             metadata.TryGetValue("OriginalFileName", out var originalFileName);
+            metadata.TryGetValue("ParentCorrelationId", out var parentCorrelationIdValue);
+
             originalFileName = string.IsNullOrEmpty(originalFileName) ? blobName : originalFileName;
+            Guid? parentCorrelationId = string.IsNullOrEmpty(parentCorrelationIdValue) ? null : Guid.Parse(parentCorrelationIdValue);
 
             try
             {
@@ -118,7 +117,8 @@ namespace TelecomCdr.AzureFunctions.Functions
                     OriginalFileName = originalFileName,
                     BlobSize = blobSize,
                     Metadata = metadata.ToDictionary(),
-                    OriginalUploadCorrelationId = originalUploadCorrelationId
+                    UploadCorrelationId = uploadCorrelationId,
+                    ParentCorrelationId = parentCorrelationId,
                 };
 
                 await _blobProcessingOrchestrator.OrchestrateBlobProcessingAsync(triggerInfo);
@@ -130,13 +130,12 @@ namespace TelecomCdr.AzureFunctions.Functions
                 // Attempt to update master job status to Failed
                 try
                 {
-                    var jobStatusToFail = await _jobStatusRepository.GetJobStatusByCorrelationIdAsync(originalUploadCorrelationId);
+                    var jobStatusToFail = await _jobStatusRepository.GetJobStatusByCorrelationIdAsync(uploadCorrelationId);
                     if (jobStatusToFail != null)
                     {
-                        jobStatusToFail.Status = ProcessingStatus.Failed;
-                        jobStatusToFail.Message = $"Failed during initial processing or chunking: {ex.Message}";
-                        jobStatusToFail.LastUpdatedAtUtc = DateTime.UtcNow;
-                        await _jobStatusRepository.UpdateJobStatusAsync(jobStatusToFail);
+                        await _jobStatusRepository.UpdateJobStatusAsync(jobStatusToFail
+                            .WithStatus(ProcessingStatus.Failed)
+                            .WithMessage($"Failed during initial processing or chunking: {ex.Message}"));
                     }
                 }
                 catch (Exception updateEx)
@@ -146,6 +145,22 @@ namespace TelecomCdr.AzureFunctions.Functions
                 // Depending on the error, we might want to rethrow or handle specifically
                 // For an Azure Function, rethrowing might cause retries if configured.
             }
+        }
+
+        private (bool correlationIdExists, Guid correlationId) GetCorrelationIdFromMetadata(IDictionary<string, string> metadata)
+        {
+            var uploadCorrelationId = string.Empty;
+            var correlationId = Guid.Empty;
+            var correlationIdExists = metadata != null && metadata.TryGetValue(UploadCorrelationIdKey, out uploadCorrelationId);
+            
+            // Check if the correlation ID exists and is a valid GUID
+            if (correlationIdExists && !Guid.TryParse(uploadCorrelationId, out correlationId))
+            {
+                _logger.LogError($"Invalid 'UploadCorrelationId' in blob metadata. Processing cannot continue.");
+                return (false, correlationId);
+            }
+
+            return (correlationIdExists, correlationId);
         }
     }
 }

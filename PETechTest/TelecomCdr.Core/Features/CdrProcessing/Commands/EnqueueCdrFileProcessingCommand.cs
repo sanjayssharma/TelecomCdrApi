@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace TelecomCdr.Core.Features.CdrProcessing.Commands
 {
-    public class EnqueueCdrFileProcessingCommand : IRequest<string> // Returns JobId
+    public class EnqueueCdrFileProcessingCommand : IRequest<Guid> // Returns JobId which is the CorrelationId
     {
         public IFormFile File { get; set; }
         public Guid CorrelationId { get; set; }

@@ -45,6 +45,23 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
                 failedRecords.Count(), failedRecords.FirstOrDefault()?.UploadCorrelationId);
         }
 
+        public async Task AddBatchAsync(IEnumerable<FailedCdrRecord> failedRecords)
+        {
+            if (failedRecords == null || !failedRecords.Any()) return;
+
+            var utcNow = DateTime.UtcNow;
+            foreach (var record in failedRecords)
+            {
+                record.FailedAtUtc = utcNow;
+            }
+
+            await _context.FailedCdrRecords.AddRangeAsync(failedRecords);
+            await _context.SaveChangesAsync();
+
+            _logger.LogInformation("Saved a batch of {Count} failed CDR records for CorrelationId: {CorrelationId}",
+                failedRecords.Count(), failedRecords.FirstOrDefault()?.UploadCorrelationId);
+        }
+
         public async Task<IEnumerable<FailedCdrRecord>> GetByCorrelationIdAsync(string correlationId, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(correlationId))

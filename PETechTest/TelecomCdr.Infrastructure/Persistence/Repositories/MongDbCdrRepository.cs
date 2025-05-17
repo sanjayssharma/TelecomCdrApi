@@ -11,6 +11,11 @@ namespace TelecomCdr.Infrastructure.Persistence.Repositories
             throw new NotImplementedException();
         }
 
+        public Task AddBatchAsync(IEnumerable<CallDetailRecord> records)
+        {
+            throw new NotImplementedException();
+        }
+
         public Task<(List<CallDetailRecord> Items, int TotalCount)> GetByCallerIdAsync(string callerId, int pageNumber, int pageSize, CancellationToken cancellationToken = default)
         {
             throw new NotImplementedException();

@@ -7,13 +7,11 @@ using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Interfaces.Service;
 using TelecomCdr.Abstraction.Models;
 using TelecomCdr.Domain;
-using TelecomCdr.Infrastructure.Persistence.Repositories;
 
 namespace TelecomCdr.Infrastructure.Services
 {
     public class CsvFileProcessingService : IFileProcessingService
     {
-        private readonly AppDbContext _dbContext;
         private readonly ICdrRepository _cdrRepository;
         private readonly IFailedCdrRecordRepository _failedRecordRepository;
         private readonly IBlobStorageService _blobStorageService;
@@ -23,13 +21,11 @@ namespace TelecomCdr.Infrastructure.Services
         public CsvFileProcessingService(
             ICdrRepository cdrRepository,
             IFailedCdrRecordRepository failedRecordRepository,
-            AppDbContext dbContext,
             IBlobStorageService blobStorageService,
             ILogger<CsvFileProcessingService> logger)
         {
             _cdrRepository = cdrRepository ?? throw new ArgumentNullException(nameof(cdrRepository));
             _failedRecordRepository = failedRecordRepository ?? throw new ArgumentNullException(nameof(failedRecordRepository));
-            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _blobStorageService = blobStorageService ?? throw new ArgumentNullException(nameof(blobStorageService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -44,7 +40,7 @@ namespace TelecomCdr.Infrastructure.Services
 
         public async Task<FileProcessingResult> ProcessAndStoreCdrFileFromBlobAsync(string containerName, string blobName, Guid originalUploadCorrelationId, CancellationToken cancellationToken = default)
         {
-            _logger.LogInformation("Processing and storing CDR data from blob: {ContainerName}/{BlobName}. OriginalUploadCorrelationId: {OriginalUploadCorrelationId}",
+            _logger.LogInformation("Processing and storing CDR data from blob: {ContainerName}/{BlobName}. UploadCorrelationId: {UploadCorrelationId}",
                 containerName, blobName, originalUploadCorrelationId);
 
             var result = new FileProcessingResult();
@@ -68,7 +64,7 @@ namespace TelecomCdr.Infrastructure.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to download blob {BlobName} from container {ContainerName} for processing. OriginalUploadCorrelationId: {OriginalUploadCorrelationId}",
+                _logger.LogError(ex, "Failed to download blob {BlobName} from container {ContainerName} for processing. UploadCorrelationId: {UploadCorrelationId}",
                     blobName, containerName, originalUploadCorrelationId);
 
                 result.ErrorMessages.Add($"Exception ocurred when trying to access the file: {blobName}, uploadCorrelationId: {originalUploadCorrelationId}");
@@ -137,7 +133,7 @@ namespace TelecomCdr.Infrastructure.Services
                             uploadCorrelationId
                         );
                         successfullCdrBatch.Add(cdr);
-                        //result.ProcessedRecordsCount++;
+                        //result.SuccessfulRecordsCount++;
                     }
                     catch (Exception ex)
                     {
@@ -194,7 +190,7 @@ namespace TelecomCdr.Infrastructure.Services
                 result.FailedRecordsCount = -1; // Indicate a file-level failure
             }
 
-            _logger.LogInformation("Finished processing CDR data. Total processed: {TotalProcessed}, Total failed: {TotalFailed}. UploadCorrelationId: {UploadCorrelationId}", result.ProcessedRecordsCount, result.FailedRecordsCount, correlationIdString);
+            _logger.LogInformation("Finished processing CDR data. Total processed: {TotalProcessed}, Total failed: {TotalFailed}. UploadCorrelationId: {UploadCorrelationId}", result.SuccessfulRecordsCount, result.FailedRecordsCount, correlationIdString);
 
             return result;
         }
@@ -207,7 +203,7 @@ namespace TelecomCdr.Infrastructure.Services
             try
             {
                 await _cdrRepository.AddBatchAsync(batch);
-                overallResult.ProcessedRecordsCount += batch.Count;
+                overallResult.SuccessfulRecordsCount += batch.Count;
                 _logger.LogDebug("Saved batch of {Count} successful CDR records for CorrelationId {CorrelationId}.", batch.Count, correlationId);
             }
             catch (Exception dbEx)
@@ -216,13 +212,16 @@ namespace TelecomCdr.Infrastructure.Services
                 overallResult.FailedRecordsCount += batch.Count;
                 foreach (var record in batch)
                 {
-                    failedBatchBuffer.Add(new FailedCdrRecord // Add to the main failed batch for later saving
+                    var failedMessage = new FailedCdrRecord // Add to the main failed batch for later saving
                     {
                         UploadCorrelationId = correlationId,
                         RawRowData = $"Ref: {record.Reference}, Caller: {record.CallerId}", // Or serialize
                         ErrorMessage = $"DB insert failed after parse: {dbEx.Message}",
                         FailedAtUtc = DateTime.UtcNow
-                    });
+                    };
+                    failedBatchBuffer.Add(failedMessage);
+
+                    overallResult.ErrorMessages.Add($"{failedMessage.RawRowData}, {failedMessage.ErrorMessage}");
                 }
             }
             finally
@@ -282,19 +281,6 @@ namespace TelecomCdr.Infrastructure.Services
             {
                 throw new InvalidDataException("Currency is missing or not 3 characters.");
             }
-        }
-
-        // Temporary DTO for CsvHelper mapping - still reads original CSV columns
-        private class CdrFileRecordDto
-        {
-            public string CallerId { get; set; }
-            public string Recipient { get; set; }
-            public string CallDate { get; set; } // Read as string from CSV "call_date"
-            public string EndTime { get; set; }  // Read as string from CSV "end_time"
-            public int? Duration { get; set; }
-            public decimal? Cost { get; set; }
-            public string Reference { get; set; }
-            public string Currency { get; set; }
         }
 
         // CsvHelper ClassMap to map CSV headers to DTO properties

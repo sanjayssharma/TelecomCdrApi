@@ -10,11 +10,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="coverlet.collector"/>
-    <PackageReference Include="Microsoft.NET.Test.Sdk"/>
-    <PackageReference Include="NUnit"/>
-    <PackageReference Include="NUnit.Analyzers"/>
-    <PackageReference Include="NUnit3TestAdapter"/>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Moq" />
+    <PackageReference Include="NUnit" />
+    <PackageReference Include="NUnit.Analyzers" />
+    <PackageReference Include="NUnit3TestAdapter" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TelecomCdr.Abstraction\TelecomCdr.Abstraction.csproj" />
+    <ProjectReference Include="..\TelecomCdr.Domain\TelecomCdr.Domain.csproj" />
+    <ProjectReference Include="..\TelecomCdr.Infrastructure\TelecomCdr.Infrastructure.csproj" />
   </ItemGroup>
 
   <ItemGroup>
