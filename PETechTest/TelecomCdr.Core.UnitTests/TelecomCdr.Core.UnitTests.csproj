@@ -11,14 +11,27 @@
 
   <ItemGroup>
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="Microsoft.AspNetCore.Http.Features" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Moq" />
     <PackageReference Include="NUnit" />
     <PackageReference Include="NUnit.Analyzers" />
-    <PackageReference Include="NUnit3TestAdapter"  />
+    <PackageReference Include="NUnit3TestAdapter" />
   </ItemGroup>
 
   <ItemGroup>
     <Using Include="NUnit.Framework" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Filters\" />
+    <Folder Include="Queries\" />
+    <Folder Include="Validators\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TelecomCdr.Core\TelecomCdr.Core.csproj" />
   </ItemGroup>
 
 </Project>
