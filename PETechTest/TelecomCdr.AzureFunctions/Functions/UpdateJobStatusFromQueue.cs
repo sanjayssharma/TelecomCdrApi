@@ -1,7 +1,6 @@
 ﻿using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using System.Text.Json;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Models;
 using TelecomCdr.Domain;

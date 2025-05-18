@@ -141,7 +141,7 @@ The document outlines how we would automatically trigger our backend processing 
 ### Azure Setup
 
 1.  **Storage Account & Container:**
-    * Ensure we have an Azure Storage Account and a specific container designated for these direct uploads (e.g., `cdr-direct-uploads`). This is the container name configured in our API's `FileUploadSettings`.
+    * Ensure we have an Azure Storage Account and a specific container designated for these direct uploads (e.g., `direct-cdr-uploads`). This is the container name configured in our API's `FileUploadSettings`.
 
 2.  **Azure Function App:**
     * We'll need an Azure Function App (e.g., the one hosting our `TelecomCdr.DurableFunctions`/`TelecomCdr.AzureFunctions` or a dedicated one for event handling).
