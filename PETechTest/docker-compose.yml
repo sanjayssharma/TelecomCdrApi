@@ -5,51 +5,51 @@ version: '3.8' # Specifies the Docker Compose file format version
 
 services:
   # CDR API Service (Hosts Hangfire Server)
-  cdr-api:
-    container_name: cdr-api-container # Custom name for the API container
-    build:
-      context: ./ # Build context is the solution root directory (where PETechTest.sln is)
-      dockerfile: ./TelecomCdr.API/Dockerfile # Path to the Dockerfile for the API project
-    ports:
-      - "8080:8080" # Map host port 8080 to container port 8080 (HTTP)
-      - "8081:8081" # Map host port 8081 to container port 8081 (HTTPS, if Kestrel is configured for it)
-    environment:
-      # ASP.NET Core Environment Settings
-      - ASPNETCORE_ENVIRONMENT=Development # Sets the environment to Development
-      - ASPNETCORE_URLS=http://+:8080;https://+:8081 # URLs Kestrel listens on inside the container
+  # cdr-api:
+    # container_name: cdr-api-container # Custom name for the API container
+    # build:
+      # context: ./ # Build context is the solution root directory (where PETechTest.sln is)
+      # dockerfile: ./TelecomCdr.API/Dockerfile # Path to the Dockerfile for the API project
+    # ports:
+      # - "8080:8080" # Map host port 8080 to container port 8080 (HTTP)
+      # - "8081:8081" # Map host port 8081 to container port 8081 (HTTPS, if Kestrel is configured for it)
+    # environment:
+      # # ASP.NET Core Environment Settings
+      # - ASPNETCORE_ENVIRONMENT=Development # Sets the environment to Development
+      # - ASPNETCORE_URLS=http://+:8080;https://+:8081 # URLs Kestrel listens on inside the container
 
-      # Connection Strings (Double underscore __ replaces colon : for environment variable mapping)
-      # Points to the mssql-server service for the main CDR database (CdrDb)
-      - ConnectionStrings__CdrConnection=Server=mssql-server,1433;Database=CdrDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
-      # Points to the mssql-server service for the Hangfire database (HangfireDb)
-      - ConnectionStrings__HangfireConnection=Server=mssql-server,1433;Database=HangfireDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+      # # Connection Strings (Double underscore __ replaces colon : for environment variable mapping)
+      # # Points to the mssql-server service for the main CDR database (CdrDb)
+      # - ConnectionStrings__CdrConnection=Server=mssql-server,1433;Database=CdrDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+      # # Points to the mssql-server service for the Hangfire database (HangfireDb)
+      # - ConnectionStrings__HangfireConnection=Server=mssql-server,1433;Database=HangfireDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
 
-      # Azure Blob Storage Configuration (Points to Azurite for local dev, or use actual connection string)
-      - AzureBlobStorage__ConnectionString=UseDevelopmentStorage=true # UseDevelopmentStorage=true targets Azurite default shortcut
-      # Alternative Azurite connection string if needed:
-      # - AzureBlobStorage__ConnectionString=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;
-      - AzureBlobStorage__ContainerName=cdr-uploads-local # Local container name for uploads
+      # # Azure Blob Storage Configuration (Points to Azurite for local dev, or use actual connection string)
+      # - AzureBlobStorage__ConnectionString=UseDevelopmentStorage=true # UseDevelopmentStorage=true targets Azurite default shortcut
+      # # Alternative Azurite connection string if needed:
+      # # - AzureBlobStorage__ConnectionString=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;
+      # - AzureBlobStorage__ContainerName=cdr-uploads-local # Local container name for uploads
 
-      # Redis Configuration (Points to the redis service defined below)
-      - RedisSettings__ConnectionString=redis:6379 # Hostname 'redis' resolves to the Redis service container
-      - RedisSettings__DefaultExpiryMinutes=1440 # Example: 24 hours expiry for idempotency keys
+      # # Redis Configuration (Points to the redis service defined below)
+      # - RedisSettings__ConnectionString=redis:6379 # Hostname 'redis' resolves to the Redis service container
+      # - RedisSettings__DefaultExpiryMinutes=1440 # Example: 24 hours expiry for idempotency keys
 
-      # Serilog Configuration (Example override via environment variables)
-      - Serilog__MinimumLevel__Default=Information
-      - Serilog__MinimumLevel__Override__Microsoft.AspNetCore=Warning
+      # # Serilog Configuration (Example override via environment variables)
+      # - Serilog__MinimumLevel__Default=Information
+      # - Serilog__MinimumLevel__Override__Microsoft.AspNetCore=Warning
 
-    volumes:
-      # Mount a local directory for logs generated by the API container (optional)
-      - ./logs/cdr-api:/app/logs
-      # Add other volume mounts if needed (e.g., for source code hot reload during development)
-      # - ../src:/app/src:ro # Example: Mounts solution's src folder read-only
+    # volumes:
+      # # Mount a local directory for logs generated by the API container (optional)
+      # - ./logs/cdr-api:/app/logs
+      # # Add other volume mounts if needed (e.g., for source code hot reload during development)
+      # # - ../src:/app/src:ro # Example: Mounts solution's src folder read-only
 
-    depends_on:
-      - mssql-server # Ensures SQL Server starts before the API
-      - redis        # Ensures Redis starts before the API
-      # - azurite    # Add dependency if running Azurite within Compose (see below)
-    networks:
-      - cdr-network # Connects the service to the shared network
+    # depends_on:
+      # - mssql-server # Ensures SQL Server starts before the API
+      # - redis        # Ensures Redis starts before the API
+      # # - azurite    # Add dependency if running Azurite within Compose (see below)
+    # networks:
+      # - cdr-network # Connects the service to the shared network
 
   # SQL Server Service
   mssql-server:
