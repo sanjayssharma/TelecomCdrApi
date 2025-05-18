@@ -14,8 +14,8 @@ namespace TelecomCdr.Core.Features.CdrProcessing.Validators
         {
             RuleFor(x => x.File)
                 .NotNull().WithMessage("File is required.")
-                .Must(file => file.Length > 0).WithMessage("File cannot be empty.")
-                .Must(file => file.ContentType == "text/csv" || file.ContentType == "application/vnd.ms-excel" || file.ContentType == "application/octet-stream")
+                .Must(file => file?.Length > 0).WithMessage("File cannot be empty.")
+                .Must(file => file?.ContentType == "text/csv" || file?.ContentType == "application/vnd.ms-excel" || file?.ContentType == "application/octet-stream")
                 .WithMessage("File must be a CSV.")
                 .Must(BeWithinSizeLimit).WithMessage($"File size exceeds the limit of {MaxFileSizeForEnqueue / (1024 * 1024)}MB for this endpoint. Please use the direct upload mechanism for larger files."); ;
 

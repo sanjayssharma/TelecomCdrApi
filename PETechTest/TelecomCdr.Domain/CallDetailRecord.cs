@@ -29,25 +29,22 @@ namespace TelecomCdr.Domain
         // Private constructor for EF Core
         private CallDetailRecord() { }
 
-        public CallDetailRecord(
-            string callerId,
-            string recipient,
-            DateTime callDate,
-            TimeSpan endTime,
-            int duration,
-            decimal cost,
-            string reference,
-            string currency,
-            Guid uploadCorrelationId)
+        public CallDetailRecord( string callerId, string recipient, DateTime callDate,
+            TimeSpan endTime, int duration, decimal cost, string reference,
+            string currency, Guid uploadCorrelationId)
         {
             if (string.IsNullOrWhiteSpace(callerId))
                 throw new ArgumentException("Caller ID cannot be empty.", nameof(callerId));
+
             if (string.IsNullOrWhiteSpace(recipient))
                 throw new ArgumentException("Recipient cannot be empty.", nameof(recipient));
+
             if (string.IsNullOrWhiteSpace(reference))
                 throw new ArgumentException("Reference cannot be empty.", nameof(reference));
+
             if (duration < 0)
                 throw new ArgumentOutOfRangeException(nameof(duration), "Duration cannot be negative.");
+
             if (cost < 0)
                 throw new ArgumentOutOfRangeException(nameof(cost), "Cost cannot be negative.");
 

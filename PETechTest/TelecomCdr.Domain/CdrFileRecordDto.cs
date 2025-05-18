@@ -7,8 +7,8 @@
         public string Recipient { get; set; }
         public string CallDate { get; set; } // Read as string from CSV "call_date"
         public string EndTime { get; set; }  // Read as string from CSV "end_time"
-        public int? Duration { get; set; }
-        public decimal? Cost { get; set; }
+        public string Duration { get; set; }
+        public string Cost { get; set; }
         public string Reference { get; set; }
         public string Currency { get; set; }
     }

@@ -18,8 +18,8 @@ namespace TelecomCdr.Infrastructure.UnitTests.Helpers
                 Recipient = $"Recipient{index}",
                 CallDate = DateTime.Now.AddDays(-index).ToString("dd/MM/yyyy"),
                 EndTime = DateTime.Now.AddHours(-index).ToString("HH\\:mm\\:ss"),
-                Duration = 60 + index,
-                Cost = 1.23m + (index * 0.1m),
+                Duration = (60 + index).ToString(),
+                Cost = (1.23m + (index * 0.1m)).ToString(),
                 Reference = $"Ref{index:D5}", // Ensure unique reference
                 Currency = "GBP"
             };

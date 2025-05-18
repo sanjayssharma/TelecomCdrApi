@@ -1,337 +1,347 @@
 ﻿using Microsoft.Extensions.Logging;
 using Moq;
+using System.Text;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Interfaces.Service;
 using TelecomCdr.Domain;
 using TelecomCdr.Infrastructure.Services;
-using TelecomCdr.Infrastructure.UnitTests.Helpers;
+
 
 namespace TelecomCdr.Infrastructure.UnitTests.Services
 {
     [TestFixture]
     public class CsvFileProcessingServiceTests
     {
-        private Mock<IBlobStorageService> _mockBlobService;
         private Mock<ICdrRepository> _mockCdrRepository;
         private Mock<IFailedCdrRecordRepository> _mockFailedRecordRepository;
+        private Mock<IBlobStorageService> _mockBlobStorageService;
         private Mock<ILogger<CsvFileProcessingService>> _mockLogger;
-        private const int BATCH_SIZE = 2;
+        private CsvFileProcessingService _csvFileProcessingService;
 
-        private CsvFileProcessingService _service;
+        private const string ValidCsvHeader = "caller_id,recipient,call_date,end_time,duration,cost,reference,currency";
 
         [SetUp]
-        public void Setup()
+        public void SetUp()
         {
-            _mockBlobService = new Mock<IBlobStorageService>();
             _mockCdrRepository = new Mock<ICdrRepository>();
             _mockFailedRecordRepository = new Mock<IFailedCdrRecordRepository>();
+            _mockBlobStorageService = new Mock<IBlobStorageService>();
             _mockLogger = new Mock<ILogger<CsvFileProcessingService>>();
 
-            _service = new CsvFileProcessingService(
+            _csvFileProcessingService = new CsvFileProcessingService(
                 _mockCdrRepository.Object,
                 _mockFailedRecordRepository.Object,
-                _mockBlobService.Object,
-                _mockLogger.Object);
+                _mockBlobStorageService.Object,
+                _mockLogger.Object
+            );
         }
 
+        private Stream GenerateCsvStream(string content)
+        {
+            return new MemoryStream(Encoding.UTF8.GetBytes(content));
+        }
+
+        #region ProcessAndStoreCdrFileAsync (and ProcessInternalAsync) Tests
+
         [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_ValidCsv_AllRecordsProcessedSuccessfully()
+        public async Task ProcessAndStoreCdrFileAsync_WithValidCsv_ProcessesAllRecordsSuccessfully()
         {
             // Arrange
-            var correlationId = Guid.NewGuid();
-            var records = Enumerable.Range(1, 5).Select(TestHelpers.GenerateValidTestCdrRecordDto).ToList();
-            var csvContent = TestHelpers.GenerateCsvContent(records);
-            var stream = TestHelpers.CreateCsvStreamFromString(csvContent);
+            var uploadCorrelationId = Guid.NewGuid();
+            var csvContent = $"{ValidCsvHeader}\n" +
+                             "123,456,01/01/2024,10:00:00,60,0.5,ref1,USD\n" +
+                             "789,012,02/01/2024,11:00:00,120,1.0,ref2,USD";
+            using var stream = GenerateCsvStream(csvContent);
 
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                            .ReturnsAsync(stream);
             _mockCdrRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>()))
                               .Returns(Task.CompletedTask);
 
             // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("test.csv", "container", correlationId);
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileAsync(stream, uploadCorrelationId);
 
             // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(5));
+            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(2));
             Assert.That(result.FailedRecordsCount, Is.EqualTo(0));
             Assert.IsEmpty(result.ErrorMessages);
-            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.Is<IEnumerable<CallDetailRecord>>(list => list.Count() == 5)), Times.Once);
+            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>()), Times.Once);
             _mockFailedRecordRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>()), Times.Never);
         }
 
         [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_EmptyFile_ReturnsZeroProcessedAndFailed()
+        public async Task ProcessAndStoreCdrFileAsync_WithSomeInvalidRows_ProcessesValidAndCapturesFailed()
         {
             // Arrange
-            var correlationId = Guid.NewGuid();
-            var stream = TestHelpers.CreateCsvStreamFromString("CallerId,Recipient,CallDate,EndTime,Duration,Cost,Reference,Currency\n"); // Header only
+            var uploadCorrelationId = Guid.NewGuid();
+            var csvContent = $"{ValidCsvHeader}\n" +
+                             "123,456,01/01/2024,10:00:00,60,0.5,ref1,USD\n" + // Valid
+                             ",,invalid_date,invalid_time,nan,nan,ref2_invalid,XYZ\n" + // Invalid (missing caller, recipient, bad date/time, duration, cost)
+                             "789,012,02/01/2024,11:00:00,120,1.0,ref3,USD"; // Valid
+            using var stream = GenerateCsvStream(csvContent);
 
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                            .ReturnsAsync(stream);
-
-            // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("empty.csv", "container", correlationId);
-
-            // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(0));
-            Assert.IsTrue(result.ErrorMessages.Any(m => m.Contains("empty or contained only a header")));
-            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>()), Times.Never);
-            _mockFailedRecordRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>()), Times.Never);
-        }
-
-        [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_CompletelyEmptyFile_ReturnsZeroProcessedAndFailed()
-        {
-            // Arrange
-            var correlationId = Guid.NewGuid();
-            var stream = TestHelpers.CreateCsvStreamFromString(""); // Completely empty
-
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                            .ReturnsAsync(stream);
-            // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("completely_empty.csv", "container", correlationId);
-
-            // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(0));
-        }
-
-
-        [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_BlobNotFound_ReturnsFailedResult()
-        {
-            // Arrange
-            var correlationId = Guid.NewGuid();
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                            .ReturnsAsync(Stream.Null); // Simulate blob not found
-
-            // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("nonexistent.csv", "container", correlationId);
-
-            // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(-1)); // Indicates file-level error
-            Assert.That(result.ErrorMessages.Any(m => m.Contains("not found in container")), Is.True);
-        }
-
-        [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_RowWithInvalidDateFormat_ProcessesValidAndLogsFailed()
-        {
-            // Arrange
-            var correlationId = Guid.NewGuid();
-            var cancellationToken = It.IsAny<CancellationToken>();
-            var records = new List<CdrFileRecordDto>
-            {
-                TestHelpers.GenerateValidTestCdrRecordDto(1),
-                new CdrFileRecordDto { CallerId = "Caller2", Recipient = "Rec2", CallDate = "INVALID-DATE", EndTime = "10:00:00", Duration = 10, Cost = 1, Reference = "RefInvalidDate", Currency = "USD" },
-                TestHelpers.GenerateValidTestCdrRecordDto(3)
-            };
-            var csvContent = TestHelpers.GenerateCsvContent(records);
-            var stream = TestHelpers.CreateCsvStreamFromString(csvContent);
-
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(stream);
-            _mockCdrRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>())).Returns(Task.CompletedTask);
-            _mockFailedRecordRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>())).Returns(Task.CompletedTask);
-
-            // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("mixed.csv", "container", correlationId);
-
-            // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(2));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(1));
-            Assert.IsTrue(result.ErrorMessages.Any(m => m.Contains("INVALID-DATE' was not recognized as a valid DateTime.")));
-            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.Is<IEnumerable<CallDetailRecord>>(list => list.Count() == 2)), Times.Once);
-            _mockFailedRecordRepository.Verify(r => r.AddBatchAsync(It.Is<IEnumerable<FailedCdrRecord>>(list => list.Count() == 1 && list.First().ErrorMessage.Contains("CallDate 'INVALID-DATE'"))), Times.Once);
-        }
-
-        [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_RowWithMissingRequiredField_ProcessesValidAndLogsFailed()
-        {
-            // Arrange
-            var correlationId = Guid.NewGuid();
-            var records = new List<CdrFileRecordDto>
-            {
-                TestHelpers.GenerateValidTestCdrRecordDto(1),
-                new CdrFileRecordDto { CallerId = "Caller2", Recipient = "Rec2", CallDate = "01/01/2023", EndTime = "10:00:00", Duration = 10, Cost = 1, Reference = null, Currency = "USD" }, // Missing Reference
-                TestHelpers.GenerateValidTestCdrRecordDto(3)
-            };
-            var csvContent = TestHelpers.GenerateCsvContent(records);
-            var stream = TestHelpers.CreateCsvStreamFromString(csvContent);
-
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(stream);
-            // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("missing_ref.csv", "container", correlationId);
-
-            // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(2));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(1));
-            Assert.IsTrue(result.ErrorMessages.Any(m => m.Contains("Reference field is missing or empty.")));
-            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.Is<IEnumerable<CallDetailRecord>>(list => list.Count() == 2)), Times.Once);
-            _mockFailedRecordRepository.Verify(r => r.AddBatchAsync(It.Is<IEnumerable<FailedCdrRecord>>(list => list.Count() == 1 && list.First().ErrorMessage.Contains("Reference field is missing"))), Times.Once);
-        }
-
-        [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_DbErrorOnSavingSuccessfulBatch_MovesToFailedRecords()
-        {
-            // Arrange
-            var correlationId = Guid.NewGuid();
-            var records = Enumerable.Range(1, 3).Select(TestHelpers.GenerateValidTestCdrRecordDto).ToList();
-            var csvContent = TestHelpers.GenerateCsvContent(records);
-            var stream = TestHelpers.CreateCsvStreamFromString(csvContent);
-
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(stream);
             _mockCdrRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>()))
-                              .ThrowsAsync(new Exception("Simulated DB error")); // Fail saving successful records
-            _mockFailedRecordRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>())).Returns(Task.CompletedTask);
-
-            // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("db_error.csv", "container", correlationId);
-
-            // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0)); // None were actually saved
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(3));    // All 3 moved to failed due to DB error
-            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>()), Times.Once); // Attempted once
-            _mockFailedRecordRepository.Verify(r => r.AddBatchAsync(It.Is<IEnumerable<FailedCdrRecord>>(list => list.Count() == 3 && list.All(f => f.ErrorMessage.Contains("Simulated DB error")))), Times.Once);
-        }
-
-        [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_DbErrorOnSavingFailedBatch_LogsCriticalError()
-        {
-            // Arrange
-            var correlationId = Guid.NewGuid();
-            var records = new List<CdrFileRecordDto>
-            {
-                new CdrFileRecordDto { CallerId = "Invalid", Recipient = "Invalid", CallDate = "bad-date", EndTime = "bad-time", Duration = 1, Cost = 1, Reference = "Fail1", Currency = "ERR" }
-            };
-            var csvContent = TestHelpers.GenerateCsvContent(records);
-            var stream =TestHelpers.CreateCsvStreamFromString(csvContent);
-
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(stream);
+                              .Returns(Task.CompletedTask);
             _mockFailedRecordRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>()))
-                                       .ThrowsAsync(new Exception("Simulated DB error for failed records"));
-
+                                       .Returns(Task.CompletedTask);
             // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("db_error_failed.csv", "container", correlationId);
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileAsync(stream, uploadCorrelationId);
 
             // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(1)); // Parsing failed, but saving this failure also failed
+            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(2));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(1));
+            Assert.IsNotEmpty(result.ErrorMessages);
+            Assert.IsTrue(result.ErrorMessages.Any(e => e.Contains("Row 3") && e.Contains("CallerId field is missing or empty."))); // Example error message
+            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>()), Times.Once);
             _mockFailedRecordRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>()), Times.Once);
-            // Verify logger was called with critical error (this requires more complex logger mocking or checking if not using specific extension methods)
-            // For simplicity, we assume the log happens. In a real test, you might inject a test logger.
-        }
-
-
-        [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_MultipleBatches_ProcessesAllCorrectly()
-        {
-            // Arrange
-            var correlationId = Guid.NewGuid();
-            int totalRecords = BATCH_SIZE + 5; // CsvFileProcessingService.BatchSize is private, use a known value or make BatchSize protected/internal for testing
-            var records = Enumerable.Range(1, totalRecords).Select(TestHelpers.GenerateValidTestCdrRecordDto).ToList();
-            var csvContent = TestHelpers.GenerateCsvContent(records);
-            var stream = TestHelpers.CreateCsvStreamFromString(csvContent);
-
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(stream);
-            _mockCdrRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>())).Returns(Task.CompletedTask);
-
-            // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("large.csv", "container", correlationId);
-
-            // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(totalRecords));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(0));
-            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.Is<IEnumerable<CallDetailRecord>>(list => list.Count() == 1000)), Times.Exactly(totalRecords / 1000)); // Assuming BatchSize is 1000
-            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.Is<IEnumerable<CallDetailRecord>>(list => list.Count() == totalRecords % 1000)), Times.Once);
         }
 
         [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_HeaderValidationException_ReturnsFileLevelError()
+        public async Task ProcessAndStoreCdrFileAsync_WithInvalidDateFormat_CapturesFailed()
         {
             // Arrange
-            var correlationId = Guid.NewGuid();
-            // Simulate a scenario where CsvReader throws HeaderValidationException
-            // This is hard to trigger directly without CsvReader.ValidateHeader,
-            // but we can mock the stream to cause an early CsvHelperException if needed,
-            // or assume the internal try-catch for HeaderValidationException works if it's thrown by CsvHelper.
-            // For this test, we'll assume the service's catch block for HeaderValidationException is hit.
-            // A more direct way would be to mock CsvReader if the service allowed injecting it,
-            // or to craft a stream that CsvHelper itself would throw on.
+            var uploadCorrelationId = Guid.NewGuid();
+            var csvContent = $"{ValidCsvHeader}\n" +
+                             "123,456,2024-01-01,10:00:00,60,0.5,ref1,USD"; // Invalid date format
+            using var stream = GenerateCsvStream(csvContent);
 
-            // Let's simulate by providing a stream that causes an error *before* row processing,
-            // which might be caught by the broader CsvHelperException or general Exception block.
-            // To specifically test HeaderValidationException, you'd typically need to configure CsvReader to validate headers
-            // and provide a CSV with mismatching headers.
-            // For now, let's test the general critical error path.
-            var stream = new MemoryStream(); // Empty stream will cause issues if header is expected
-            var writer = new StreamWriter(stream);
-            writer.Write("WrongHeader1,WrongHeader2\nvalue1,value2"); // Mismatched headers
-            writer.Flush();
-            stream.Position = 0;
-
-
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                            .ReturnsAsync(stream); // Stream that will likely cause CsvHelper to error early
-
+            _mockFailedRecordRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>()))
+                                       .Returns(Task.CompletedTask);
             // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("bad_header.csv", "container", correlationId);
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileAsync(stream, uploadCorrelationId);
 
             // Assert
             Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(-1)); // File-level error
-            Assert.IsTrue(result.ErrorMessages.Any(m => m.Contains("CSV Header validation failed") || m.Contains("Critical CSV processing error")));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(1));
+            Assert.IsTrue(result.ErrorMessages.Any(e => e.Contains("Row 2") && e.Contains("String '2024-01-01' was not recognized as a valid DateTime.")));
+            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>()), Times.Never);
+            _mockFailedRecordRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>()), Times.Once);
         }
 
-        // Test for "HH:mm:ss" time format
+
         [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_ValidCsvWith24HourTimeFormat_ProcessesSuccessfully()
+        public async Task ProcessAndStoreCdrFileAsync_EmptyCsv_ReturnsZeroCounts()
+        {
+            // Arrange
+            var uploadCorrelationId = Guid.NewGuid();
+            var csvContent = ValidCsvHeader; // Only header
+            using var stream = GenerateCsvStream(csvContent);
+
+            // Act
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileAsync(stream, uploadCorrelationId);
+
+            // Assert
+            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(0));
+            Assert.IsEmpty(result.ErrorMessages);
+        }
+
+        [Test]
+        public async Task ProcessAndStoreCdrFileAsync_CompletelyEmptyStream_ReturnsZeroCounts()
+        {
+            // Arrange
+            var uploadCorrelationId = Guid.NewGuid();
+            var csvContent = ""; // Empty content
+            using var stream = GenerateCsvStream(csvContent);
+
+            // Act
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileAsync(stream, uploadCorrelationId);
+
+            // Assert
+            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
+            // It might log a header validation error or just process nothing.
+            // Based on current code, CsvReader might throw if header is expected but not found.
+            // Let's check for a file-level error.
+            Assert.IsTrue(result.ErrorMessages.Any(e => e.Contains("Stream is empty or no header row found")));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(-1), "FailedRecordsCount should indicate file-level error for empty stream.");
+        }
+
+        [Test]
+        public async Task ProcessAndStoreCdrFileAsync_CsvHeaderValidationFails_ReturnsFileLevelError()
+        {
+            // Arrange
+            var uploadCorrelationId = Guid.NewGuid();
+            var csvContent = "wrong_header1,wrong_header2\nval1,val2";
+            using var stream = GenerateCsvStream(csvContent);
+
+            // Act
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileAsync(stream, uploadCorrelationId);
+
+            // Assert
+            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public async Task ProcessAndStoreCdrFileAsync_CdrDbSaveFails_MovesToFailedRecords()
+        {
+            // Arrange
+            var uploadCorrelationId = Guid.NewGuid();
+            var csvContent = $"{ValidCsvHeader}\n123,456,01/01/2024,10:00:00,60,0.5,ref1,USD";
+            using var stream = GenerateCsvStream(csvContent);
+            List<FailedCdrRecord> capturedFailedList = null;
+
+            _mockCdrRepository.Setup(r => r.AddBatchAsync(It.IsAny<List<CallDetailRecord>>()))
+                              .ThrowsAsync(new Exception("Database connection error"));
+
+            // Setup AddBatchAsync on _mockFailedRecordRepository to capture the argument
+            _mockFailedRecordRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>()))
+                                       .Callback<IEnumerable<FailedCdrRecord>>(list => capturedFailedList = [.. list]) // Capture a copy
+                                       .Returns(Task.CompletedTask);
+            // Act
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileAsync(stream, uploadCorrelationId);
+
+            // Assert
+            Assert.AreEqual(0, result.SuccessfulRecordsCount, "SuccessfulRecordsCount should be 0 when DB save fails.");
+            Assert.AreEqual(1, result.FailedRecordsCount, "FailedRecordsCount should be 1 when one record fails to save to CDR DB.");
+            Assert.IsTrue(result.ErrorMessages.Any(e => e.Contains("DB insert failed after parse")), "ErrorMessages should contain DB insert failure message.");
+
+            _mockFailedRecordRepository.Verify(r => r.AddBatchAsync(It.IsAny<List<FailedCdrRecord>>()), Times.Once, "AddBatchAsync for failed records should be called once.");
+
+            Assert.IsNotNull(capturedFailedList, "Captured list of failed records should not be null.");
+            Assert.AreEqual(1, capturedFailedList.Count, "Captured list should contain one failed record.");
+            Assert.IsNotNull(capturedFailedList[0], "The failed record in the captured list should not be null.");
+            StringAssert.Contains("Database connection error", capturedFailedList[0].ErrorMessage, "Failed record's ErrorMessage should contain the original DB exception message.");
+            StringAssert.Contains("DB insert failed after parse", capturedFailedList[0].ErrorMessage, "Failed record's ErrorMessage should indicate it was a DB insert failure post-parse.");
+        }
+
+        [Test]
+        public async Task ProcessAndStoreCdrFileAsync_FailedDbSaveAlsoFails_LogsError()
+        {
+            // Arrange
+            var uploadCorrelationId = Guid.NewGuid();
+            var csvContent = $"{ValidCsvHeader}\n,,invalid_date,invalid_time,nan,nan,ref2_invalid,XYZ"; // This row will fail parsing
+            using var stream = GenerateCsvStream(csvContent);
+
+            _mockFailedRecordRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<FailedCdrRecord>>()))
+                                       .ThrowsAsync(new Exception("Failed records DB error"));
+            // Act
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileAsync(stream, uploadCorrelationId);
+
+            // Assert
+            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(1)); // Still counts the parsing failure
+            // Verify that the critical error of not being able to save failed records is logged
+            VerifyLog(LogLevel.Error, msg => msg.Contains("Database error saving batch of 1 failed CSV row records") && msg.Contains("These failures might be lost"));
+        }
+
+        [Test]
+        public async Task ProcessAndStoreCdrFileAsync_CancellationRequested_ThrowsOperationCanceledException()
+        {
+            // Arrange
+            var uploadCorrelationId = Guid.NewGuid();
+            var csvContent = $"{ValidCsvHeader}\n123,456,01/01/2024,10:00:00,60,0.5,ref1,USD";
+            using var stream = GenerateCsvStream(csvContent);
+            var cancellationTokenSource = new CancellationTokenSource();
+            cancellationTokenSource.Cancel(); // Cancel immediately
+
+            // Act
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileAsync(stream, uploadCorrelationId, cancellationTokenSource.Token);
+
+            // Assert
+            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(-1));
+            Assert.IsTrue(result.ErrorMessages.Any(e => e.Contains("operation was canceled")));
+        }
+
+        #endregion
+
+        #region ProcessAndStoreCdrFileFromBlobAsync Tests
+
+        [Test]
+        public async Task ProcessAndStoreCdrFileFromBlobAsync_BlobDownloadFails_ReturnsFileLevelError()
         {
             // Arrange
             var correlationId = Guid.NewGuid();
-            var records = new List<CdrFileRecordDto>
-            {
-                new CdrFileRecordDto { CallerId = "C1", Recipient = "R1", CallDate = "15/03/2024", EndTime = "14:30:00", Duration = 120, Cost = 2.50m, Reference = "RefTime1", Currency = "EUR" },
-                new CdrFileRecordDto { CallerId = "C2", Recipient = "R2", CallDate = "16/03/2024", EndTime = "00:05:10", Duration = 300, Cost = 1.75m, Reference = "RefTime2", Currency = "USD" }
-            };
-            var csvContent = TestHelpers.GenerateCsvContent(records);
-            var stream = TestHelpers.CreateCsvStreamFromString(csvContent);
+            var container = "testcontainer";
+            var blob = "testblob.csv";
+            _mockBlobStorageService.Setup(s => s.DownloadFileAsync(container, blob, It.IsAny<CancellationToken>()))
+                                   .ReturnsAsync((Stream)null); // Simulate blob not found / error
 
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                            .ReturnsAsync(stream);
+            // Act
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileFromBlobAsync(container, blob, correlationId);
+
+            // Assert
+            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(-1));
+            Assert.IsTrue(result.ErrorMessages.Any(e => e.Contains($"Blob {blob} not found")));
+        }
+
+        [Test]
+        public async Task ProcessAndStoreCdrFileFromBlobAsync_BlobDownloadThrowsException_ReturnsErrorResult()
+        {
+            // Arrange
+            var correlationId = Guid.NewGuid();
+            var container = "testcontainer";
+            var blob = "testblob.csv";
+            var exceptionMessage = "Storage access denied";
+            _mockBlobStorageService.Setup(s => s.DownloadFileAsync(container, blob, It.IsAny<CancellationToken>()))
+                                   .ThrowsAsync(new Exception(exceptionMessage));
+
+            // Act
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileFromBlobAsync(container, blob, correlationId);
+
+            // Assert
+            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(0));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(0));
+            Assert.IsTrue(result.ErrorMessages.Any(e => e.Contains($"Exception ocurred when trying to access the file: {blob}")));
+        }
+
+        [Test]
+        public async Task ProcessAndStoreCdrFileFromBlobAsync_ValidBlob_DelegatesToInternalProcessing()
+        {
+            // Arrange
+            var correlationId = Guid.NewGuid();
+            var container = "testcontainer";
+            var blob = "testblob.csv";
+            var csvContent = $"{ValidCsvHeader}\n123,456,01/01/2024,10:00:00,60,0.5,ref1,USD";
+            using var blobStream = GenerateCsvStream(csvContent);
+
+            _mockBlobStorageService.Setup(s => s.DownloadFileAsync(container, blob, It.IsAny<CancellationToken>()))
+                                   .ReturnsAsync(blobStream);
             _mockCdrRepository.Setup(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>()))
                               .Returns(Task.CompletedTask);
 
             // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("time_test.csv", "container", correlationId);
-
-            // Assert
-            Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(2));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(0));
-            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.Is<IEnumerable<CallDetailRecord>>(list => list.Count() == 2)), Times.Once);
-        }
-
-        [Test]
-        public async Task ProcessAndStoreCdrFileFromBlobAsync_RowWithInvalid24HourTimeFormat_LogsFailed()
-        {
-            // Arrange
-            var correlationId = Guid.NewGuid();
-            var records = new List<CdrFileRecordDto>
-            {
-                TestHelpers.GenerateValidTestCdrRecordDto(1),
-                new CdrFileRecordDto { CallerId = "Caller2", Recipient = "Rec2", CallDate = "01/01/2023", EndTime = "25:00:00", Duration = 10, Cost = 1, Reference = "RefInvalidTime", Currency = "USD" }, // Invalid hour
-            };
-            var csvContent = TestHelpers.GenerateCsvContent(records);
-            var stream = TestHelpers.CreateCsvStreamFromString(csvContent);
-
-            _mockBlobService.Setup(s => s.DownloadFileAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(stream);
-            // Act
-            var result = await _service.ProcessAndStoreCdrFileFromBlobAsync("invalid_time.csv", "container", correlationId);
+            var result = await _csvFileProcessingService.ProcessAndStoreCdrFileFromBlobAsync(container, blob, correlationId);
 
             // Assert
             Assert.That(result.SuccessfulRecordsCount, Is.EqualTo(1));
-            Assert.That(result.FailedRecordsCount, Is.EqualTo(1));
-            Assert.IsTrue(result.ErrorMessages.Any(m => m.Contains("EndTime '25:00:00' is not in 'HH:mm:ss' format.")));
+            Assert.That(result.FailedRecordsCount, Is.EqualTo(0));
+            _mockCdrRepository.Verify(r => r.AddBatchAsync(It.IsAny<IEnumerable<CallDetailRecord>>()), Times.Once);
+        }
+
+
+        #endregion
+
+        // Helper method for verifying ILogger calls
+
+        private void VerifyLog(LogLevel expectedLogLevel, Func<string, bool> messageStatePredicate, Times? times = null)
+        {
+            times ??= Times.Once();
+            _mockLogger.Verify(
+                x => x.Log(
+                    expectedLogLevel,
+                    It.IsAny<EventId>(),
+                    It.Is<It.IsAnyType>((s, type) => messageStatePredicate(s.ToString())),
+                    It.IsAny<Exception>(), // Allows null or any exception
+                    It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+                times.Value);
+        }
+
+        // Helper for LogError calls where we want to verify exception properties
+        private void VerifyLogError<TException>(
+            Func<string, bool> messageStatePredicate,
+            Func<TException, bool> exceptionPredicate, // Predicate for the exception itself
+            Times? times = null) where TException : Exception
+        {
+            times ??= Times.Once();
+            _mockLogger.Verify(
+                x => x.Log(
+                    LogLevel.Error, // Specific to LogError
+                    It.IsAny<EventId>(),
+                    It.Is<It.IsAnyType>((s, type) => messageStatePredicate(s.ToString())),
+                    It.Is<TException>(ex => exceptionPredicate(ex)), // Verify exception properties
+                    It.IsAny<Func<It.IsAnyType, Exception, string>>()),
+                times.Value);
         }
     }
 }

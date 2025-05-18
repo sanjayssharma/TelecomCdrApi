@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 using System.Text.Json;
 using TelecomCdr.Abstraction.Interfaces.Service;
+using TelecomCdr.Abstraction.Models;
 
 namespace TelecomCdr.Infrastructure.Services
 {
@@ -36,7 +37,7 @@ namespace TelecomCdr.Infrastructure.Services
             _defaultExpiry = TimeSpan.FromMinutes(expiryMinutes);
         }
 
-        public async Task<CachedHttpResponse?> GetCachedResponseAsync(string idempotencyKey)
+        public async Task<CachedIdempotencyEntry?> GetCachedResponseAsync(string idempotencyKey)
         {
             if (string.IsNullOrWhiteSpace(idempotencyKey))
             {
@@ -51,7 +52,7 @@ namespace TelecomCdr.Infrastructure.Services
                 if (storedValue.HasValue)
                 {
                     _logger.LogInformation("Idempotency key '{RedisKey}' found in cache.", redisKey);
-                    return JsonSerializer.Deserialize<CachedHttpResponse>(storedValue.ToString());
+                    return JsonSerializer.Deserialize<CachedIdempotencyEntry>(storedValue.ToString());
                 }
                 _logger.LogInformation("Idempotency key '{RedisKey}' not found in cache.", redisKey);
                 return null;
@@ -96,7 +97,7 @@ namespace TelecomCdr.Infrastructure.Services
             string redisKey = $"idempotency:{idempotencyKey}";
             try
             {
-                var responseToCache = new CachedHttpResponse
+                var responseToCache = new CachedIdempotencyEntry
                 {
                     StatusCode = statusCode,
                     BodyJson = responseBody != null ? JsonSerializer.Serialize(responseBody) : null,

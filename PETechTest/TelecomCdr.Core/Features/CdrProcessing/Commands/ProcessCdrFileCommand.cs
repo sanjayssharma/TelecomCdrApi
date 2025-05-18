@@ -10,8 +10,8 @@ namespace TelecomCdr.Core.Features.CdrProcessing.Commands
 
         public ProcessCdrFileCommand(IFormFile file, Guid correlationId)
         {
-            File = file ?? throw new ArgumentNullException(nameof(file));
-            CorrelationId = correlationId != Guid.Empty ? correlationId : throw new ArgumentNullException(nameof(correlationId));
+            File = file;
+            CorrelationId = correlationId;
         }
     }
 }

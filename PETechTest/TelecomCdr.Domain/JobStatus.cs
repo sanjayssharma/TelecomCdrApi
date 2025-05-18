@@ -60,5 +60,10 @@ namespace TelecomCdr.Domain
         public string? OriginalFileName { get; set; }
         public string? BlobName { get; set; } // For single files or individual chunks
         public string? ContainerName { get; set; }
+
+        public void SetParentCorrelationId(Guid? parentCorrelationId)
+        {
+            ParentCorrelationId = parentCorrelationId;
+        }
     }
 }

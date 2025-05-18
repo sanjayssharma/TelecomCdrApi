@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using TelecomCdr.Abstraction.Interfaces.Service;
+using TelecomCdr.Abstraction.Models;
 
 namespace TelecomCdr.Infrastructure.Services
 {
@@ -22,13 +23,13 @@ namespace TelecomCdr.Infrastructure.Services
         /// </summary>
         /// <param name="idempotencyKey">The idempotency key (ignored).</param>
         /// <returns>A task resolving to null.</returns>
-        public Task<CachedHttpResponse?> GetCachedResponseAsync(string idempotencyKey)
+        public Task<CachedIdempotencyEntry?> GetCachedResponseAsync(string idempotencyKey)
         {
             // Log the attempt for debugging purposes if needed, but generally keep it quiet.
             // _logger.LogDebug("NullIdempotencyService: GetCachedResponseAsync called for key {IdempotencyKey}, returning null.", idempotencyKey);
 
             // Return null immediately, wrapped in a completed task.
-            return Task.FromResult<CachedHttpResponse?>(null);
+            return Task.FromResult<CachedIdempotencyEntry?>(null);
         }
 
         /// <summary>

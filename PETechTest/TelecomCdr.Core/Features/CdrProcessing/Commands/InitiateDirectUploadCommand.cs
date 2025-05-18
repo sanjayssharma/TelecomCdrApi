@@ -16,7 +16,7 @@ namespace TelecomCdr.Core.Features.CdrProcessing.Commands
 
         public InitiateDirectUploadCommand(InitiateUploadRequestDto uploadRequest)
         {
-            UploadRequest = uploadRequest ?? throw new System.ArgumentNullException(nameof(uploadRequest));
+            UploadRequest = uploadRequest;
         }
     }
 }

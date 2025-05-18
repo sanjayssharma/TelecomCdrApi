@@ -6,25 +6,25 @@ using TelecomCdr.Core.Features.CdrProcessing.Commands;
 using TelecomCdr.Core.Features.CdrProcessing.Validators;
 using TelecomCdr.Core.Models;
 
-namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
+namespace TelecomCdr.Core.UnitTests.Validators
 {
     [TestFixture]
     public class CommandValidatorTests
     {
         private EnqueueCdrFileProcessingCommandValidator _enqueueValidator;
         private ProcessCdrFileCommandValidator _processValidator;
-        private InitiateDirectUploadCommandValidator _initiateDirectUploadValidator; // Added
+        private InitiateDirectUploadCommandValidator _initiateDirectUploadValidator;
 
         // Max file sizes from validators (ensure these match the constants in your validator classes)
-        private const long MaxFileSizeForEnqueue = 200 * 1024 * 1024; // 200 MB from EnqueueCdrFileProcessingCommandValidator
-        private const long MaxFileSizeForProcess = 100 * 1024 * 1024; // 100 MB from ProcessCdrFileCommandValidator
+        private const long MaxFileSizeForEnqueue = 200 * 1024 * 1024; // 200 MB
+        private const long MaxFileSizeForProcess = 100 * 1024 * 1024; // 100 MB
 
         [SetUp]
         public void SetUp()
         {
             _enqueueValidator = new EnqueueCdrFileProcessingCommandValidator();
             _processValidator = new ProcessCdrFileCommandValidator();
-            _initiateDirectUploadValidator = new InitiateDirectUploadCommandValidator(); // Instantiate new validator
+            _initiateDirectUploadValidator = new InitiateDirectUploadCommandValidator();
         }
 
         // Helper to create a mock IFormFile
@@ -76,17 +76,12 @@ namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
         [TestCase("text/csv")]
         [TestCase("application/vnd.ms-excel")]
         [TestCase("application/octet-stream")] // As per validator
-        public void EnqueueValidator_WhenFileContentTypeIsValid_ShouldNotHaveSpecificContentTypeValidationError(string validContentType)
+        public void EnqueueValidator_WhenFileContentTypeIsValid_ShouldNotHaveContentTypeValidationError(string validContentType)
         {
-            var mockFile = CreateMockFormFile("test.csv", 1024, validContentType); // Ensure size is valid
+            var mockFile = CreateMockFormFile("test.csv", 1024, validContentType);
             var command = new EnqueueCdrFileProcessingCommand (mockFile, Guid.NewGuid());
             var result = _enqueueValidator.TestValidate(command);
-
-            // Check that the specific error message for content type is not present for the 'File' property
-            var contentTypeError = result.Errors.FirstOrDefault(
-                e => e.PropertyName == nameof(command.File) &&
-                     e.ErrorMessage == "File must be a CSV.");
-            Assert.IsNull(contentTypeError, "Should not have 'File must be a CSV.' error for valid content type if other File rules pass.");
+            result.ShouldNotHaveValidationErrorFor(x => x.File); // This will pass if other rules for File also pass
         }
 
 
@@ -113,7 +108,7 @@ namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
         [Test]
         public void EnqueueValidator_WhenCommandIsValid_ShouldNotHaveValidationErrors()
         {
-            var mockFile = CreateMockFormFile("test.csv", 1024, "text/csv"); // Valid size
+            var mockFile = CreateMockFormFile("test.csv", 1024, "text/csv");
             var command = new EnqueueCdrFileProcessingCommand (mockFile, Guid.NewGuid());
             var result = _enqueueValidator.TestValidate(command);
             result.ShouldNotHaveAnyValidationErrors();
@@ -126,7 +121,7 @@ namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
         [Test]
         public void ProcessValidator_WhenFileIsNull_ShouldHaveValidationError()
         {
-            var command = new ProcessCdrFileCommand (null, Guid.NewGuid());
+            var command = new ProcessCdrFileCommand(null, Guid.NewGuid());
             var result = _processValidator.TestValidate(command);
             result.ShouldHaveValidationErrorFor(x => x.File)
                   .WithErrorMessage("File is required.");
@@ -156,20 +151,18 @@ namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
         [TestCase("text/csv")]
         [TestCase("application/vnd.ms-excel")]
         [TestCase("application/octet-stream")]
-        public void ProcessValidator_WhenFileContentTypeIsValid_ShouldNotHaveSpecificContentTypeValidationError(string validContentType)
+        public void ProcessValidator_WhenFileContentTypeIsValid_ShouldNotHaveContentTypeValidationError(string validContentType)
         {
-            var mockFile = CreateMockFormFile("test.csv", 1024, validContentType); // Ensure size is valid
+            var mockFile = CreateMockFormFile("test.csv", 1024, validContentType);
             var command = new ProcessCdrFileCommand (mockFile, Guid.NewGuid());
             var result = _processValidator.TestValidate(command);
-            var contentTypeError = result.Errors.FirstOrDefault(
-                e => e.PropertyName == nameof(command.File) &&
-                     e.ErrorMessage == "File must be a CSV.");
-            Assert.IsNull(contentTypeError, "Should not have 'File must be a CSV.' error for valid content type if other File rules pass.");
+            result.ShouldNotHaveValidationErrorFor(x => x.File);
         }
 
         [Test]
         public void ProcessValidator_WhenFileSizeExceedsLimit_ShouldHaveValidationError()
         {
+            // MaxFileSizeForProcess is 100MB
             var oversizedFile = CreateMockFormFile("large.csv", MaxFileSizeForProcess + 1, "text/csv");
             var command = new ProcessCdrFileCommand (oversizedFile, Guid.NewGuid());
             var result = _processValidator.TestValidate(command);
@@ -190,7 +183,7 @@ namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
         [Test]
         public void ProcessValidator_WhenCommandIsValid_ShouldNotHaveValidationErrors()
         {
-            var mockFile = CreateMockFormFile("test.csv", 1024, "text/csv"); // Valid size
+            var mockFile = CreateMockFormFile("test.csv", 1024, "text/csv");
             var command = new ProcessCdrFileCommand (mockFile, Guid.NewGuid());
             var result = _processValidator.TestValidate(command);
             result.ShouldNotHaveAnyValidationErrors();
@@ -203,7 +196,6 @@ namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
         [Test]
         public void InitiateDirectUploadValidator_WhenUploadRequestIsNull_ShouldHaveValidationError()
         {
-            // Pass null directly to the constructor as per InitiateDirectUploadCommand definition
             var command = new InitiateDirectUploadCommand(null);
             var result = _initiateDirectUploadValidator.TestValidate(command);
             result.ShouldHaveValidationErrorFor(x => x.UploadRequest)
@@ -216,6 +208,8 @@ namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
             var uploadRequestDto = new InitiateUploadRequestDto { FileName = "", ContentType = "text/csv" };
             var command = new InitiateDirectUploadCommand(uploadRequestDto);
             var result = _initiateDirectUploadValidator.TestValidate(command);
+
+            // The error message is for the UploadRequest property due to the chained .Must()
             result.ShouldHaveValidationErrorFor(x => x.UploadRequest)
                   .WithErrorMessage("Name of the file to be uploaded cannot be null or empty");
         }
@@ -238,6 +232,8 @@ namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
             var uploadRequestDto = new InitiateUploadRequestDto { FileName = "test.csv", ContentType = invalidContentType };
             var command = new InitiateDirectUploadCommand(uploadRequestDto);
             var result = _initiateDirectUploadValidator.TestValidate(command);
+
+            // The error message is for the UploadRequest property due to the chained .Must()
             result.ShouldHaveValidationErrorFor(x => x.UploadRequest)
                   .WithErrorMessage("File must be a CSV.");
         }
@@ -245,15 +241,15 @@ namespace TelecomCdr.Core.UnitTests.Features.CdrProcessing.Validators
         [TestCase("text/csv")]
         [TestCase("application/vnd.ms-excel")]
         [TestCase("application/octet-stream")]
-        public void InitiateDirectUploadValidator_WhenContentTypeIsValid_ShouldNotHaveSpecificContentTypeValidationError(string validContentType)
+        public void InitiateDirectUploadValidator_WhenContentTypeIsValid_ShouldNotHaveContentTypeValidationError(string validContentType)
         {
             var uploadRequestDto = new InitiateUploadRequestDto { FileName = "test.csv", ContentType = validContentType };
             var command = new InitiateDirectUploadCommand(uploadRequestDto);
             var result = _initiateDirectUploadValidator.TestValidate(command);
-            var contentTypeError = result.Errors.FirstOrDefault(
-                e => e.PropertyName == nameof(command.UploadRequest) &&
-                     e.ErrorMessage == "File must be a CSV.");
-            Assert.IsNull(contentTypeError, "Should not have 'File must be a CSV.' error for valid content type if other UploadRequest rules pass.");
+
+            // Check that the specific error message for content type is not present
+            var contentTypeError = result.Errors.FirstOrDefault(e => e.PropertyName == nameof(command.UploadRequest) && e.ErrorMessage == "File must be a CSV.");
+            Assert.IsNull(contentTypeError, "Should not have 'File must be a CSV.' error for valid content type.");
         }
 
         [Test]

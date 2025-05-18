@@ -89,7 +89,8 @@ namespace TelecomCdr.Infrastructure.Services
                     TrimOptions = TrimOptions.Trim,
                     BadDataFound = context => // Handle bad data per row
                     {
-                        _logger.LogWarning("Bad data found in CSV row: {RawRow}. Field: {Field}, Context: {Context}", context.RawRecord, context.Field, context.Context);
+                        _logger.LogWarning("Bad data found in CSV row: {RawRow}. Field: {Field}, Context: {Context}", 
+                            context.RawRecord, context.Field, context.Context);
                     }
                 };
 
@@ -100,13 +101,23 @@ namespace TelecomCdr.Infrastructure.Services
                 using var csv = new CsvReader(reader, csvConfig);
                 csv.Context.RegisterClassMap<CdrFileRecordDtoMap>(); // Ensure DTO mapping is used
 
+                // Manually read and validate header if CsvReader's default isn't sufficient or to provide custom error
+                var validationResult = await ValidateCsvHeaderAsync(csv, correlationIdString, cancellationToken);
+
+                if (validationResult != null)
+                {
+                    result.ErrorMessages.AddRange(validationResult.ErrorMessages);
+                    result.FailedRecordsCount = -1; // Indicate a file-level failure
+                    return result;
+                }
+
                 // Process row by row
                 while (await csv.ReadAsync())
                 {
                     rowNumber++;
                     string rawRow = csv.Context.Parser?.RawRecord ?? string.Empty;
-
                     cancellationToken.ThrowIfCancellationRequested();
+                    
                     try
                     {
                         var recordDto = csv.GetRecord<CdrFileRecordDto>();
@@ -114,26 +125,17 @@ namespace TelecomCdr.Infrastructure.Services
                         // Validate the row and adjust the rules accordingly. So invalid data could be identified and recorded.
                         await ValidateRowAsync(recordDto);
 
-                        // Parse date and time components
+                        // Fields have been validated so we could safely parse them
                         var callDatePart = DateTime.ParseExact(recordDto.CallDate, "dd/MM/yyyy", CultureInfo.InvariantCulture);
-                        if (!TimeSpan.TryParse(recordDto.EndTime, out TimeSpan endTimePart))
-                        {
-                            _logger.LogWarning("Unable to parseEndTime for Reference {CdrReference}, CorrelationId: {CorrelationId}", recordDto.Reference, correlationIdString);
-                        }
+                        var endTimePart = TimeSpan.Parse(recordDto.EndTime);
+                        var duration = int.Parse(recordDto.Duration, NumberStyles.Integer, CultureInfo.InvariantCulture);
+                        var cost = decimal.Parse(recordDto.Cost, NumberStyles.AllowDecimalPoint | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
 
                         var cdr = new CallDetailRecord(
-                            recordDto.CallerId,
-                            recordDto.Recipient,
-                            callDatePart,
-                            endTimePart,
-                            recordDto.Duration.Value,
-                            recordDto.Cost.Value,
-                            recordDto.Reference,
-                            recordDto.Currency,
-                            uploadCorrelationId
+                            recordDto.CallerId, recordDto.Recipient, callDatePart, endTimePart, duration,
+                            cost, recordDto.Reference, recordDto.Currency, uploadCorrelationId
                         );
                         successfullCdrBatch.Add(cdr);
-                        //result.SuccessfulRecordsCount++;
                     }
                     catch (Exception ex)
                     {
@@ -195,6 +197,47 @@ namespace TelecomCdr.Infrastructure.Services
             return result;
         }
 
+        private async Task<FileProcessingResult?> ValidateCsvHeaderAsync(CsvReader csv, string correlationId, CancellationToken cancellationToken)
+        {
+            FileProcessingResult? fileResultOnError = null;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                bool hasMoreRows = await csv.ReadAsync(); 
+                if (!hasMoreRows)
+                {
+                    // This means the stream is empty or only contains an empty line before any header.
+                    _logger.LogError("CSV stream is empty or does not contain a header row for CorrelationId {CorrelationId}.", correlationId);
+                    fileResultOnError = new FileProcessingResult();
+                    fileResultOnError.ErrorMessages.Add("Critical error reading CSV header: Stream is empty or no header row found.");
+                    return fileResultOnError;
+                }
+
+                csv.ReadHeader();      // Process the header
+                csv.ValidateHeader<CdrFileRecordDto>(); // Validate based on map
+            }
+            catch (HeaderValidationException headerEx)
+            {
+                _logger.LogError(headerEx, "CSV Header validation failed for CorrelationId {CorrelationId}. Invalid headers: {InvalidHeaders}",
+                    correlationId, string.Join(", ", headerEx.InvalidHeaders?.SelectMany(h => h.Names) ?? Enumerable.Empty<string>()));
+                fileResultOnError = new FileProcessingResult();
+                fileResultOnError.ErrorMessages.Add($"CSV Header validation failed: {headerEx.Message}");
+            }
+            catch (OperationCanceledException opEx)
+            {
+                _logger.LogWarning(opEx, "Header validation cancelled for CorrelationId {CorrelationId}.", correlationId);
+                throw; // Rethrow cancellation
+            }
+            catch (Exception ex) // Catch other issues during header read (e.g., general stream errors, unexpected format)
+            {
+                _logger.LogError(ex, "Critical error reading CSV header for CorrelationId {CorrelationId}.", correlationId);
+                fileResultOnError = new FileProcessingResult();
+                fileResultOnError.ErrorMessages.Add($"Critical error reading CSV header: {ex.Message}");
+            }
+
+            return fileResultOnError;
+        }
+
         private async Task SaveSuccessfulBatchAsync(List<CallDetailRecord> batch, FileProcessingResult overallResult, string correlationId, List<FailedCdrRecord> failedBatchBuffer)
         {
             if (batch.Count == 0) 
@@ -253,34 +296,39 @@ namespace TelecomCdr.Infrastructure.Services
 
         private async Task ValidateRowAsync(CdrFileRecordDto recordDto)
         {
-            if (string.IsNullOrWhiteSpace(recordDto.Reference))
-            {
+            if (string.IsNullOrWhiteSpace(recordDto.Reference)) 
                 throw new InvalidDataException("Reference field is missing or empty.");
-            }
-            if (string.IsNullOrWhiteSpace(recordDto.CallerId))
-            {
+            
+            if (string.IsNullOrWhiteSpace(recordDto.CallerId)) 
                 throw new InvalidDataException("CallerId field is missing or empty.");
-            }
-            if (string.IsNullOrWhiteSpace(recordDto.Recipient))
-            {
+            
+            if (string.IsNullOrWhiteSpace(recordDto.Recipient)) 
                 throw new InvalidDataException("Recipient field is missing or empty.");
-            }
-            if (string.IsNullOrWhiteSpace(recordDto.CallDate) || string.IsNullOrWhiteSpace(recordDto.EndTime))
-            {
-                throw new InvalidDataException("CallDate or EndTime is missing.");
-            }
-            if (!recordDto.Duration.HasValue)
-            {
-                throw new InvalidDataException("Duration is missing.");
-            }
-            if (!recordDto.Cost.HasValue)
-            {
-                throw new InvalidDataException("Cost is missing.");
-            }
+            
             if (string.IsNullOrWhiteSpace(recordDto.Currency) || recordDto.Currency.Length != 3)
-            {
-                throw new InvalidDataException("Currency is missing or not 3 characters.");
-            }
+                throw new InvalidDataException("Currency field is missing or not 3 characters.");
+
+            if (string.IsNullOrWhiteSpace(recordDto.Duration)) 
+                throw new InvalidDataException("Duration field is missing or empty.");
+            if (!int.TryParse(recordDto.Duration, NumberStyles.Integer, CultureInfo.InvariantCulture, out int durationValue))
+                throw new InvalidDataException($"Invalid format for Duration: '{recordDto.Duration}'. Expected an integer.");
+
+            if (string.IsNullOrWhiteSpace(recordDto.Cost)) 
+                throw new InvalidDataException("Cost field is missing or empty.");
+
+            // Use NumberStyles.AllowDecimalPoint for regions that use comma as decimal separator if InvariantCulture doesn't cover it.
+            // CultureInfo.InvariantCulture typically expects '.' as decimal separator.
+            if (!decimal.TryParse(recordDto.Cost, NumberStyles.AllowDecimalPoint | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out decimal costValue))
+                throw new InvalidDataException($"Invalid format for Cost: '{recordDto.Cost}'. Expected a decimal number.");
+
+            if (string.IsNullOrWhiteSpace(recordDto.CallDate) || string.IsNullOrWhiteSpace(recordDto.EndTime)) 
+                throw new InvalidDataException("CallDate or EndTime is missing.");
+            
+            if (!DateTime.TryParseExact(recordDto.CallDate, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime callDatePart))
+                throw new InvalidDataException($"Invalid format for CallDate: '{recordDto.CallDate}'. Expected dd/MM/yyyy.");
+
+            if (!TimeSpan.TryParse(recordDto.EndTime, CultureInfo.InvariantCulture, out TimeSpan endTimePart))
+                throw new InvalidDataException($"Invalid format for EndTime: '{recordDto.EndTime}'. Expected HH:mm:ss.");
         }
 
         // CsvHelper ClassMap to map CSV headers to DTO properties
