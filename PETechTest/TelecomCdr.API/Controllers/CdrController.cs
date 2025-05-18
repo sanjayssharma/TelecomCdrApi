@@ -1,6 +1,9 @@
-﻿using MediatR;
+﻿using Azure.Storage.Sas;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using System.ComponentModel.DataAnnotations;
+using System.Net;
+using TelecomCdr.Abstraction.Interfaces.Service;
 using TelecomCdr.Core.Features.CdrProcessing.Commands;
 using TelecomCdr.Core.Features.CdrRetrieval.Queries;
 using TelecomCdr.Core.Filters;
@@ -13,6 +16,10 @@ namespace TelecomCdr.API.Controllers
     [Route("api/cdr")]
     public class CdrController : ControllerBase
     {
+        private const string DefaultUploadContainerKey = "FileUploadSettings:UploadContainerName";
+        private const string DefaultUploadContainerName = "cdr-uploads"; // Fallback if not in config
+        private const int DefaultSasValidityMinutes = 30;
+
         private readonly IMediator _mediator;
         private readonly ILogger<CdrController> _logger;
 
@@ -60,7 +67,7 @@ namespace TelecomCdr.API.Controllers
             return Ok(new { Message = "File received and processing started.", CorrelationId = correlationId });
         }
 
-        [HttpPost("upload-large")]
+        [HttpPost("enqueue")]
         [ProducesResponseType(StatusCodes.Status202Accepted)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -195,6 +202,76 @@ namespace TelecomCdr.API.Controllers
 
             var result = await _mediator.Send(query);
             return Ok(result);
+        }
+
+        /// <summary>
+        /// Initiates a direct-to-storage upload for a large CDR file.
+        /// Generates a SAS URI that the client can use to upload the file directly to Azure Blob Storage.
+        /// Logic is now delegated to InitiateDirectUploadCommandHandler.
+        /// </summary>
+        /// <param name="request">Details of the file to be uploaded (FileName, ContentType).</param>
+        /// <returns>
+        /// An <see cref="OkObjectResult"/> with the SAS URI, blob name, and Job ID.
+        /// A <see cref="BadRequestObjectResult"/> if the request is invalid.
+        /// </returns>
+        /// <response code="200">Returns the SAS URI and details for direct upload.</response>
+        /// <response code="400">If the request is invalid (e.g., missing filename, invalid content type).</response>
+        /// <response code="500">If an unexpected error occurs while processing the request.</response>
+        [HttpPost("initiate-direct-upload")]
+        [ProducesResponseType(typeof(InitiateUploadResponseDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ErrorResponseDto), StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> InitiateDirectUpload([FromBody] InitiateUploadRequestDto request)
+        {
+            // Basic model validation provided by ASP.NET Core
+            if (!ModelState.IsValid)
+            {
+                _logger.LogWarning("InitiateDirectUpload called with invalid model state.");
+                return BadRequest(new ErrorResponseDto(HttpStatusCode.BadRequest)
+                {
+                    Message = "Invalid request parameters.",
+                    Errors = ModelState.Values.SelectMany(v => v.Errors.Select(e => e.ErrorMessage)) 
+                });
+            }
+
+            // Controller-level validation (can also be moved to a FluentValidation rule for the command)
+            if (request.ContentType?.ToLowerInvariant() != "text/csv" &&
+                Path.GetExtension(request.FileName)?.ToLowerInvariant() != ".csv")
+            {
+                _logger.LogWarning("InitiateDirectUpload called for a non-CSV file: {FileName}, ContentType: {ContentType}", request.FileName, request.ContentType);
+                return BadRequest(new ErrorResponseDto(HttpStatusCode.BadRequest)
+                {
+                    Message = "Invalid file type. Only .csv files are supported for direct upload."
+                });
+            }
+
+            try
+            {
+                // Create and dispatch the command to MediatR
+                var command = new InitiateDirectUploadCommand(request);
+                InitiateUploadResponseDto result = await _mediator.Send(command);
+
+                _logger.LogInformation("Successfully processed InitiateDirectUpload request for JobId: {JobId}", result.JobId);
+                return Ok(result);
+            }
+            catch (InvalidOperationException opEx) // Catch specific exceptions if needed
+            {
+                _logger.LogError(opEx, "Failed to process direct upload initiation for file {FileName} due to operational or configuration issue.", request.FileName);
+                // Return a more generic error to the client for security/simplicity
+                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponseDto(HttpStatusCode.InternalServerError)
+                {
+                    Message = "An error occurred while preparing the file upload. Please try again later or contact support if the issue persists."
+                });
+            }
+            catch (Exception ex)
+            {
+                // General exception handler
+                _logger.LogError(ex, "Error processing initiate direct upload request for file {FileName}.", request.FileName);
+                return StatusCode(StatusCodes.Status500InternalServerError, new ErrorResponseDto(HttpStatusCode.InternalServerError)
+                {
+                    Message = "An unexpected error occurred while preparing the file upload."
+                });
+            }
         }
     }
 }

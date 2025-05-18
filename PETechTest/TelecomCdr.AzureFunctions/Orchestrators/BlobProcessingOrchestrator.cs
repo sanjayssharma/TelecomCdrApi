@@ -1,8 +1,6 @@
 ﻿using Hangfire;
-using Microsoft.Extensions.Azure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using System.ComponentModel;
 using System.Text;
 using TelecomCdr.Abstraction.Interfaces.Repository;
 using TelecomCdr.Abstraction.Interfaces.Service;
@@ -47,7 +45,7 @@ namespace TelecomCdr.AzureFunctions.Orchestrators
 
             var uploadJob = await _jobStatusRepository.GetJobStatusByCorrelationIdAsync(triggerInfo.UploadCorrelationId);
 
-            // Create a new job record if it doesn't exist
+            // Create a new job record if it doesn't exist, This could be useful for a Direct-to-Blob upload scenario
             if (uploadJob == null)
             {
                 _logger.LogError("Master JobStatus not found for CorrelationId {CorrelationId}. This might indicate an issue with initial job creation.", triggerInfo.UploadCorrelationId);

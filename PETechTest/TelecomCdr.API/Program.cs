@@ -16,6 +16,7 @@ using TelecomCdr.Infrastructure.Persistence.Repositories;
 using TelecomCdr.Infrastructure.Services;
 using TelecomCdr.Abstraction.Interfaces.Service;
 using TelecomCdr.Abstraction.Interfaces.Repository;
+using TelecomCdr.Core.Configurations;
 
 namespace TelecomCdr.API
 {
@@ -117,6 +118,9 @@ namespace TelecomCdr.API
                 builder.Services.AddScoped<IFailedCdrRecordRepository, SqlFailedCdrRecordRepository>();
                 builder.Services.AddScoped<IFileProcessingService, CsvFileProcessingService>();
                 builder.Services.AddScoped<IQueueService, AzureStorageQueueService>();
+
+                // *** Add Configurations ***
+                builder.Services.Configure<FileUploadSettings>(builder.Configuration.GetSection(FileUploadSettings.SectionName));
 
                 // *** Add MediatR for CQRS pattern ***
                 builder.Services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(ProcessCdrFileCommand).Assembly));

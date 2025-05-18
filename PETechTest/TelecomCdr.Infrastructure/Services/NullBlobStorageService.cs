@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using Azure.Storage.Sas;
+using Microsoft.Extensions.Logging;
 using TelecomCdr.Abstraction.Interfaces.Service;
 
 namespace TelecomCdr.Infrastructure.Services
@@ -19,9 +20,24 @@ namespace TelecomCdr.Infrastructure.Services
             throw new InvalidOperationException("Blob storage is not configured. Cannot download file.");
         }
 
+        public Task<Uri> GenerateBlobUploadSasUriAsync(string containerName, string blobName, TimeSpan validityPeriod, BlobSasPermissions permissions, string contentType = null)
+        {
+            throw new NotImplementedException();
+        }
+
         public Task<(long Size, IDictionary<string, string> Metadata)> GetBlobPropertiesAsync(string containerName, string blobName, CancellationToken cancellationToken = default)
         {
             _logger.LogError("Blob storage not configured. GetBlobPropertiesAsync for {ContainerName}/{BlobName} cannot be performed.", containerName, blobName);
+            throw new NotImplementedException();
+        }
+
+        public Task<IDictionary<string, string>> GetMetadataAsync(string containerName, string blobName)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Task SetMetadataAsync(string containerName, string blobName, IDictionary<string, string> metadata)
+        {
             throw new NotImplementedException();
         }
 

@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+﻿using System.Net;
+using System.Text.Json.Serialization;
 
 namespace TelecomCdr.Core.Models
 {
@@ -18,6 +19,12 @@ namespace TelecomCdr.Core.Models
         public string Message { get; set; } = string.Empty;
 
         /// <summary>
+        /// a list of error messages, if applicable.
+        /// </summary>
+        [JsonIgnore]
+        public IEnumerable<string> Errors { get; set; }
+
+        /// <summary>
         /// Additional details about the error, such as a stack trace.
         /// This should typically only be included in development environments.
         /// </summary>
@@ -29,6 +36,11 @@ namespace TelecomCdr.Core.Models
             StatusCode = statusCode;
             Message = message;
             Details = details;
+        }
+
+        public ErrorResponseDto(HttpStatusCode statusCode)
+        {
+            this.StatusCode = (int)statusCode;
         }
     }
 }

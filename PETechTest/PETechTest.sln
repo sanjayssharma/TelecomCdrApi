@@ -38,6 +38,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TelecomCdr.AzureFunctions.T
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "AlternateSolution", "AlternateSolution", "{819D7458-E297-4791-9A61-5C2D0B195505}"
 	ProjectSection(SolutionItems) = preProject
+		DirectToStorage_Approach.md = DirectToStorage_Approach.md
 		DurableFunction-Approach.md = DurableFunction-Approach.md
 		Leveraging-AzureServices.md = Leveraging-AzureServices.md
 	EndProjectSection
